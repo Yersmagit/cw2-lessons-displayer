@@ -28,29 +28,31 @@ jobs:
           toolchain: stable
       
       - name: Install git-cliff
-        run: |
-          cargo install git-cliff
+        run: cargo install git-cliff
       
       - name: Install dependencies
         run: |
           pip install class-widgets-sdk
           pip install -e .
       
-      - name: Build plugin packages
-        run: |
-          cw-plugin-pack
-          cw-plugin-pack --format zip
+      - name: Build .cwplugin package
+        run: cw-plugin-pack
       
-      - name: List generated files (debug)
+      - name: Build .zip package
+        run: cw-plugin-pack --format zip
+      
+      - name: List generated files
+        run: ls -la *.cwplugin *.zip || echo "No files found"
+      
+      - name: Verify package contents (both formats contain qml/)
         run: |
-          ls -la *.cwplugin *.zip || echo "Files not found"
+          unzip -l *.cwplugin | grep qml/ && echo "✅ .cwplugin includes qml/" || echo "❌ .cwplugin missing qml/"
+          unzip -l *.zip | grep qml/ && echo "✅ .zip includes qml/" || echo "❌ .zip missing qml/"
       
       - name: Get version from tag
-        id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
       
       - name: Generate changelog with git-cliff
-        id: generate_changelog
         run: |
           git-cliff --config .git-cliff.toml --tag v${{ env.VERSION }} > CHANGELOG.md
           echo "CHANGELOG<<EOF" >> $GITHUB_ENV
