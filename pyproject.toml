@@ -1,9 +1,9 @@
 [project]
-name = "com-rinlit-test"
+name = "cw2-lessons-displayer"
 version = "1.0.0"
-description = "A Class Widgets plugin."
+description = "Display your lessons!"
 authors = [
-    {name = "RinLit"},
+    {name = "Yersmagit"},
 ]
 readme = "README.md"
 requires-python = ">=3.9"

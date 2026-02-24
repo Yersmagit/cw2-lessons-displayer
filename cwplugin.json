@@ -1,11 +1,11 @@
 {
-  "id": "com.rinlit.test",
-  "name": "Test",
+  "id": "com.yersmagit.lessonsdisplayer",
+  "name": "显示今日课程",
   "version": "1.0.0",
-  "api_version": "~=0.3.0",
+  "api_version": ">=0.2.0",
   "entry": "main.py",
-  "author": "RinLit",
-  "description": "A Class Widgets plugin.",
+  "author": "Yersmagit",
+  "description": "显示今日课程和熄屏模式~",
   "url": "",
   "readme": "README.md",
   "icon": "icon.png"
