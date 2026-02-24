@@ -12,12 +12,6 @@
 
 </div>
 
-> [!CAUTION]
-> 
-> 本项目还处**在开发**阶段，API 接口可能随时发生变化，敬请谅解。
-> 
-> This project is still **in development**. The API may change at any time, so please bear with us.
-
 ## 介绍 / Introduction
 可以完全展示当日课程信息，完全杜绝抄课表。
 本插件
