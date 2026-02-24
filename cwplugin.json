@@ -1,7 +1,7 @@
 {
   "id": "com.yersmagit.lessonsdisplayer",
   "name": "Lessons Displayer 全量展示课程",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "api_version": ">=0.1.0",
   "entry": "main.py",
   "author": "Yersmagit",
