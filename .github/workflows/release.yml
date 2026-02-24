@@ -26,8 +26,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          profile: minimal
-          override: true
       
       - name: Install git-cliff
         run: |
@@ -40,10 +38,12 @@ jobs:
       
       - name: Build plugin packages
         run: |
-          # Build .cwplugin format
           cw-plugin-pack
-          # Build .zip format
           cw-plugin-pack --format zip
+      
+      - name: List generated files (debug)
+        run: |
+          ls -la *.cwplugin *.zip || echo "Files not found"
       
       - name: Get version from tag
         id: get_version
@@ -58,7 +58,6 @@ jobs:
           echo "EOF" >> $GITHUB_ENV
       
       - name: Create Release
-        id: create_release
         uses: softprops/action-gh-release@v2
         with:
           name: Release v${{ env.VERSION }}
