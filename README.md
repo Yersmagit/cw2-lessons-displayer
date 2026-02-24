@@ -17,11 +17,14 @@
 本插件
 适用于 [Class Widgets 2](https://github.com/rinlit-233-shiroko/class-widgets-2) 。
 
+在寻找适用于 Class Widgets 1 的插件？请前往 旧版 [Lessons Displayer](https://github.com/Yersmagit/cw-lessons-displayer) 页面。
+
 ### 截图 / Images
 ![light](previews/light.png)
 ![dark](previews/dark.png)
 
-## 如何安装 / How to Install
+## 使用 / Usages
+### 如何安装 / How to Install
 1. 下载插件包
 
 2. 在 Class Widgets 2 -> "设置" -> "插件"中导入下载好的插件包
