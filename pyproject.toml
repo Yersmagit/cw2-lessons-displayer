@@ -1,6 +1,6 @@
 [project]
 name = "cw2-lessons-displayer"
-version = "0.1.0"
+version = "0.1.5"
 description = "Display your lessons!"
 authors = [
     {name = "Yersmagit"},

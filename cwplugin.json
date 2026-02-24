@@ -1,11 +1,11 @@
 {
   "id": "com.yersmagit.lessonsdisplayer",
-  "name": "显示今日课程",
-  "version": "0.1.0",
+  "name": "Lessons Displayer 全量展示课程",
+  "version": "0.1.5",
   "api_version": ">=0.1.0",
   "entry": "main.py",
   "author": "Yersmagit",
-  "description": "显示今日课程和熄屏模式~",
+  "description": "看看今天有什么课？LessonsDisplayer正在迁移到CW2！",
   "url": "",
   "readme": "README.md",
   "icon": "icon.png"
