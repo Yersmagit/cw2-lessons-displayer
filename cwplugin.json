@@ -1,8 +1,8 @@
 {
   "id": "com.yersmagit.lessonsdisplayer",
   "name": "显示今日课程",
-  "version": "1.0.0",
-  "api_version": ">=0.2.0",
+  "version": "0.1.0",
+  "api_version": ">=0.1.0",
   "entry": "main.py",
   "author": "Yersmagit",
   "description": "显示今日课程和熄屏模式~",
