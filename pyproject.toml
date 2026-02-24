@@ -1,0 +1,14 @@
+[project]
+name = "com-rinlit-test"
+version = "1.0.0"
+description = "A Class Widgets plugin."
+authors = [
+    {name = "RinLit"},
+]
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["class-widgets-sdk"]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
