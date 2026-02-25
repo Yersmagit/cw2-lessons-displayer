@@ -110,6 +110,27 @@ Item {
             // 自动滚动相关属性
             property bool autoScrollEnabled: true
             property bool userInteracted: false
+            property bool hovered: false   // 鼠标悬停状态
+            property bool scrollBarVisible: false  // 实际控制滚动条显示
+
+            // 滚动条隐藏延迟定时器
+            Timer {
+                id: hideScrollBarTimer
+                interval: 1000
+                onTriggered: {
+                    lessonsListView.scrollBarVisible = false
+                }
+            }
+
+            // 更新滚动条显示状态
+            function updateScrollBarVisible(show) {
+                if (show) {
+                    scrollBarVisible = true
+                    hideScrollBarTimer.stop()
+                } else {
+                    hideScrollBarTimer.restart()
+                }
+            }
 
             // 用户交互后延迟恢复定时器（4000ms）
             Timer {
@@ -130,6 +151,22 @@ Item {
                 autoScrollEnabled = false
                 userInteracted = true
                 userInteractionTimer.restart()
+                // 用户拖动时保持滚动条显示
+                updateScrollBarVisible(true)
+            }
+
+            // 鼠标悬停检测
+            HoverHandler {
+                id: listHoverHandler
+                acceptedDevices: PointerDevice.Mouse
+                onHoveredChanged: {
+                    lessonsListView.hovered = hovered
+                    if (hovered) {
+                        lessonsListView.updateScrollBarVisible(true)
+                    } else {
+                        lessonsListView.updateScrollBarVisible(false)
+                    }
+                }
             }
 
             // 鼠标区域：处理滚轮事件（带动画）
@@ -142,6 +179,8 @@ Item {
                     lessonsListView.autoScrollEnabled = false
                     lessonsListView.userInteracted = true
                     userInteractionTimer.restart()
+                    // 滚轮时保持滚动条显示
+                    lessonsListView.updateScrollBarVisible(true)
 
                     // 仅当内容宽度超出视图时才处理滚轮
                     if (wheel.angleDelta.y !== 0 && lessonsListView.contentWidth > lessonsListView.width) {
@@ -196,10 +235,10 @@ Item {
                 }
             }
 
-            // 滚动条，按需显示
+            // 滚动条，仅在 scrollBarVisible 为真且内容超出时显示
             ScrollBar.horizontal: ScrollBar {
                 policy: ScrollBar.AsNeeded
-                visible: lessonsListView.contentWidth > lessonsListView.width
+                visible: lessonsListView.contentWidth > lessonsListView.width && lessonsListView.scrollBarVisible
             }
 
             // 从后端接收滚动请求
