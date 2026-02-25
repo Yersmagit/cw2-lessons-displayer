@@ -14,14 +14,14 @@
 
 > [!IMPORTANT]
 > 
-> [原插件](https://github.com/Yersmagit/cw-lessons-displayer) 功能复杂，一些功能正逐步迁移，详见下方 __功能迁移 / Functions__ 板块。
+> [原插件](https://github.com/Yersmagit/cw-lessons-displayer) 功能复杂，一些功能正逐步迁移，详见下方 __[功能迁移 / Functions](#功能迁移--functions)__ 板块。
 
 ## 介绍 / Introduction
 可以完全展示当日课程信息，完全杜绝抄课表。
 本插件
 适用于 [Class Widgets 2](https://github.com/rinlit-233-shiroko/class-widgets-2) 。
 
-在寻找适用于 Class Widgets 1 的插件？请前往 旧版 [Lessons Displayer](https://github.com/Yersmagit/cw-lessons-displayer) 页面。
+_在寻找适用于 Class Widgets 1 的插件？请前往 旧版 [Lessons Displayer](https://github.com/Yersmagit/cw-lessons-displayer) 页面。_
 
 ### 截图 / Images
 ![light](previews/light.png)
