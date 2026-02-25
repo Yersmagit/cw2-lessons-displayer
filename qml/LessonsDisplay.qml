@@ -132,6 +132,13 @@ Item {
                 }
             }
 
+            // 暂停自动滚动（用户交互开始）
+            function pauseAutoScroll() {
+                autoScrollEnabled = false
+                userInteracted = true
+                // 注意：此处不重启计时器，由后续交互结束事件来重启
+            }
+
             // 用户交互后延迟恢复定时器（4000ms）
             Timer {
                 id: userInteractionTimer
@@ -146,13 +153,16 @@ Item {
                 }
             }
 
-            // 检测用户滚动开始
+            // 检测用户滚动开始（包括拖动内容）
             onMovementStarted: {
-                autoScrollEnabled = false
-                userInteracted = true
-                userInteractionTimer.restart()
+                pauseAutoScroll()
                 // 用户拖动时保持滚动条显示
                 updateScrollBarVisible(true)
+            }
+
+            // 拖动结束时重启计时器
+            onMovementEnded: {
+                userInteractionTimer.restart()
             }
 
             // 鼠标悬停检测
@@ -176,8 +186,8 @@ Item {
                 propagateComposedEvents: true
                 onWheel: (wheel) => {
                     // 用户滚轮交互
-                    lessonsListView.autoScrollEnabled = false
-                    lessonsListView.userInteracted = true
+                    lessonsListView.pauseAutoScroll()
+                    // 滚轮后立即重启计时器（因为滚轮是一次性事件）
                     userInteractionTimer.restart()
                     // 滚轮时保持滚动条显示
                     lessonsListView.updateScrollBarVisible(true)
@@ -237,8 +247,26 @@ Item {
 
             // 滚动条，仅在 scrollBarVisible 为真且内容超出时显示
             ScrollBar.horizontal: ScrollBar {
+                id: hScrollBar
                 policy: ScrollBar.AsNeeded
                 visible: lessonsListView.contentWidth > lessonsListView.width && lessonsListView.scrollBarVisible
+
+                // 监听滚动条交互（按下滑块或点击轨道）
+                onPressedChanged: {
+                    if (pressed) {
+                        lessonsListView.pauseAutoScroll()
+                        lessonsListView.updateScrollBarVisible(true)
+                    } else {
+                        // 释放时重启计时器
+                        userInteractionTimer.restart()
+                    }
+                }
+                // 此外，当滚动条激活（悬停或按下）时，确保滚动条保持显示
+                onActiveChanged: {
+                    if (active) {
+                        lessonsListView.updateScrollBarVisible(true)
+                    }
+                }
             }
 
             // 从后端接收滚动请求
