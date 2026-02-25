@@ -1,9 +1,7 @@
 [changelog]
 body = """
 
-## 插件更新
-> [!NOTE]
-> 当前版本：`{% if version %}({{ version }}){%- endif -%}`
+## 插件新版本 {% if version %}({{ version }}){%- endif -%}
 
 {% for group, commits in commits | group_by(attribute="group") %}
 
@@ -50,6 +48,7 @@ commit_parsers = [
     { message = "^refactor", group = "🔃 功能重构"},
     { message = "^docs", group = "📄 文档更新"},
     { message = "^style", group = "🏞️ 样式优化"},
+    { message = "^pref", group = "🚝 性能优化"},
 ]
 protect_breaking_commits = false
 filter_commits = true
