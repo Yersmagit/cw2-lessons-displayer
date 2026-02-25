@@ -12,6 +12,7 @@ Window {
     height: 54
     x: lessonsBackend.uiX
     y: lessonsBackend.uiY
+    opacity: lessonsBackend.uiOpacity  // 绑定后端透明度
 
     // 动画过渡
     Behavior on x {
@@ -30,6 +31,12 @@ Window {
         NumberAnimation {
             duration: 300
             easing.type: Easing.OutQuint
+        }
+    }
+    Behavior on opacity {
+        NumberAnimation {
+            duration: 300
+            easing.type: Easing.OutCubic
         }
     }
 

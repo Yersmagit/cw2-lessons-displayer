@@ -24,7 +24,8 @@ class LessonsBackend(QObject):
     themeChanged = Signal(bool)
     positionChanged = Signal()
     widthChanged = Signal()
-    scrollRequested = Signal(int)  # 请求滚动到指定索引
+    opacityChanged = Signal()  # 新增透明度信号
+    scrollRequested = Signal(int)
 
     def __init__(self, plugin):
         super().__init__()
@@ -37,6 +38,7 @@ class LessonsBackend(QObject):
         self._ui_x = 0
         self._ui_y = 0
         self._ui_width = DEFAULT_UI_WIDTH
+        self._opacity = 0  # 初始透明
 
     def update_lessons(self):
         entries = self.plugin.api.runtime.current_day_entries
@@ -105,9 +107,11 @@ class LessonsBackend(QObject):
         try:
             configs = self.plugin._configs
             prefs = configs.preferences
+            interactions = configs.interactions
             anchor = prefs.widgets_anchor
             offset_x = prefs.widgets_offset_x
             offset_y = prefs.widgets_offset_y
+            hide = interactions.hide.state  # 当前隐藏状态
 
             screen = QGuiApplication.primaryScreen().availableGeometry()
             screen_width = screen.width()
@@ -121,31 +125,57 @@ class LessonsBackend(QObject):
             else:
                 vert, horz = parts[0].lower(), parts[1].lower()
 
+                # 计算 y
                 if vert == "top":
-                    y = 108 + offset_y
+                    if hide and horz == "center":
+                        y = -UI_HEIGHT + 24
+                    else:
+                        y = 108 + offset_y
                 elif vert == "bottom":
-                    y = screen_height - UI_HEIGHT - offset_y - 60
+                    if hide and horz == "center":
+                        y = screen_height - 24
+                    else:
+                        y = screen_height - UI_HEIGHT - offset_y - 60
                 else:
                     y = 132
 
-                if horz == "center":
-                    x = (screen_width - ui_width) // 2 + offset_x
-                elif horz == "left":
-                    x = offset_x
+                # 计算 x
+                if horz == "left":
+                    if hide:
+                        x = -ui_width + 24
+                    else:
+                        x = offset_x
                 elif horz == "right":
-                    x = screen_width - ui_width - offset_x
+                    if hide:
+                        x = screen_width - 24
+                    else:
+                        x = screen_width - ui_width - offset_x
+                elif horz == "center":
+                    x = (screen_width - ui_width) // 2 + offset_x
                 else:
                     x = (screen_width - ui_width) // 2
 
             self._ui_x = int(x)
             self._ui_y = int(y)
             self.positionChanged.emit()
+
+            # 根据隐藏状态更新透明度
+            new_opacity = 0 if hide else 1
+            if new_opacity != self._opacity:
+                self._opacity = new_opacity
+                self.opacityChanged.emit()
+
+            plugin_logger.debug(f"更新位置: ({self._ui_x}, {self._ui_y}) 宽度: {ui_width} 隐藏: {hide}")
         except Exception as e:
             plugin_logger.error(f"计算位置失败: {e}")
             screen = QGuiApplication.primaryScreen().availableGeometry()
             self._ui_x = (screen.width() - self._ui_width) // 2
             self._ui_y = 132
             self.positionChanged.emit()
+            # 透明度保底设为1
+            if self._opacity != 1:
+                self._opacity = 1
+                self.opacityChanged.emit()
 
     def request_scroll_to_current(self):
         """请求将当前高亮课程滚动到视野内"""
@@ -168,6 +198,10 @@ class LessonsBackend(QObject):
     @Property(int, notify=widthChanged)
     def uiWidth(self):
         return self._ui_width
+
+    @Property(float, notify=opacityChanged)
+    def uiOpacity(self):
+        return self._opacity
 
     @Property(list, notify=lessonsUpdated)
     def lessons(self):
@@ -280,7 +314,7 @@ class Plugin(CW2Plugin):
 
         self._start_theme_polling()
         self._start_layer_sync()
-        self._start_scroll_timer()  # 启动滚动定时器
+        self._start_scroll_timer()
 
     def _on_config_changed(self):
         plugin_logger.debug("配置变化，更新位置")
@@ -440,9 +474,12 @@ class Plugin(CW2Plugin):
             self.window.show()
             plugin_logger.info("窗口已显示")
 
+            # 淡入动画（从0到1）
+            self.backend._opacity = 1
+            self.backend.opacityChanged.emit()
+
             self._sync_window_layer()
             self._start_width_polling()
-            # 滚动定时器已在 on_load 中启动，此处不需要重复启动
 
             plugin_logger.info("UI 已加载，mask 更新连接已建立")
         except Exception as e:
