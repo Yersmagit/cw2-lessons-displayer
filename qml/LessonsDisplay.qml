@@ -110,8 +110,8 @@ Item {
             // 自动滚动相关属性
             property bool autoScrollEnabled: true
             property bool userInteracted: false
-            property bool hovered: false   // 鼠标悬停状态
-            property bool scrollBarVisible: false  // 实际控制滚动条显示
+            property bool hovered: false
+            property bool scrollBarVisible: false
 
             // 滚动条隐藏延迟定时器
             Timer {
@@ -136,7 +136,6 @@ Item {
             function pauseAutoScroll() {
                 autoScrollEnabled = false
                 userInteracted = true
-                // 注意：此处不重启计时器，由后续交互结束事件来重启
             }
 
             // 用户交互后延迟恢复定时器（4000ms）
@@ -146,7 +145,6 @@ Item {
                 onTriggered: {
                     lessonsListView.autoScrollEnabled = true
                     lessonsListView.userInteracted = false
-                    // 触发一次滚动，因为可能错过了几次
                     if (lessonsListView.contentWidth > lessonsListView.width) {
                         lessonsListView.scrollToCurrentLesson()
                     }
@@ -156,7 +154,6 @@ Item {
             // 检测用户滚动开始（包括拖动内容）
             onMovementStarted: {
                 pauseAutoScroll()
-                // 用户拖动时保持滚动条显示
                 updateScrollBarVisible(true)
             }
 
@@ -185,23 +182,15 @@ Item {
                 acceptedButtons: Qt.NoButton
                 propagateComposedEvents: true
                 onWheel: (wheel) => {
-                    // 用户滚轮交互
                     lessonsListView.pauseAutoScroll()
-                    // 滚轮后立即重启计时器（因为滚轮是一次性事件）
                     userInteractionTimer.restart()
-                    // 滚轮时保持滚动条显示
                     lessonsListView.updateScrollBarVisible(true)
 
-                    // 仅当内容宽度超出视图时才处理滚轮
                     if (wheel.angleDelta.y !== 0 && lessonsListView.contentWidth > lessonsListView.width) {
-                        // 步长：向上滚（负delta）向左移动，向下滚向右移动
                         var step = wheel.angleDelta.y > 0 ? -150 : 150
                         var targetX = lessonsListView.contentX + step
-                        // 边界限制
                         targetX = Math.max(0, Math.min(targetX, lessonsListView.contentWidth - lessonsListView.width))
-                        // 如果目标位置与当前相差很小，忽略
                         if (Math.abs(targetX - lessonsListView.contentX) < 1) return
-                        // 停止当前动画
                         if (scrollAnimation.running) scrollAnimation.stop()
                         scrollAnimation.to = targetX
                         scrollAnimation.start()
@@ -220,10 +209,8 @@ Item {
                     radius: 20
                     color: {
                         if (modelData.id === lessonsBackend.currentLessonId) {
-                            // 上课时高亮当前课程（红色）
                             return "#e98f83"
                         } else if (lessonsBackend.currentState === 0 && modelData.id === lessonsBackend.nextLessonId) {
-                            // 课间时高亮下一节课（绿色）
                             return "#57c7a5"
                         }
                         return "transparent"
@@ -251,17 +238,14 @@ Item {
                 policy: ScrollBar.AsNeeded
                 visible: lessonsListView.contentWidth > lessonsListView.width && lessonsListView.scrollBarVisible
 
-                // 监听滚动条交互（按下滑块或点击轨道）
                 onPressedChanged: {
                     if (pressed) {
                         lessonsListView.pauseAutoScroll()
                         lessonsListView.updateScrollBarVisible(true)
                     } else {
-                        // 释放时重启计时器
                         userInteractionTimer.restart()
                     }
                 }
-                // 此外，当滚动条激活（悬停或按下）时，确保滚动条保持显示
                 onActiveChanged: {
                     if (active) {
                         lessonsListView.updateScrollBarVisible(true)
@@ -279,18 +263,16 @@ Item {
                 }
             }
 
-            // 滚动到指定索引（靠左对齐，带动画）
+            // 滚动到指定索引（左20%位置，带动画）
             function scrollToIndex(index) {
+                forceLayout()
                 if (!autoScrollEnabled) return
                 if (contentWidth <= width) return
                 var item = itemAtIndex(index)
                 if (!item) return
-                var targetX = item.x
-                // 边界限制：不能小于0，不能大于 contentWidth - width
+                var targetX = item.x - width * 0.2
                 targetX = Math.max(0, Math.min(targetX, contentWidth - width))
-                // 如果已经接近目标，跳过动画
                 if (Math.abs(contentX - targetX) < 1) return
-                // 停止当前动画
                 if (scrollAnimation.running) scrollAnimation.stop()
                 scrollAnimation.to = targetX
                 scrollAnimation.start()
@@ -388,13 +370,20 @@ Item {
         return Math.max(0, (availableWidth - listWidth) / 2)
     }
 
-    // 当内容或尺寸变化时更新布局
+    // 当内容或尺寸变化时更新布局，并确保滚动位置不越界
     Connections {
         target: lessonsBackend
         function onLessonsUpdated() {
             leftSpacer.width = Qt.binding(calculateSpacerWidth)
             rightSpacer.width = Qt.binding(calculateSpacerWidth)
             lessonsListView.width = Qt.binding(calculateListViewWidth)
+            // 延迟检查滚动边界，确保宽度已更新
+            Qt.callLater(function() {
+                var maxX = Math.max(0, lessonsListView.contentWidth - lessonsListView.width)
+                if (lessonsListView.contentX > maxX) {
+                    lessonsListView.contentX = maxX
+                }
+            })
         }
     }
 

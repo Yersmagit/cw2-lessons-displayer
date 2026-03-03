@@ -24,7 +24,7 @@ class LessonsBackend(QObject):
     themeChanged = Signal(bool)
     positionChanged = Signal()
     widthChanged = Signal()
-    opacityChanged = Signal()  # 新增透明度信号
+    opacityChanged = Signal()
     scrollRequested = Signal(int)
 
     def __init__(self, plugin):
@@ -39,6 +39,12 @@ class LessonsBackend(QObject):
         self._ui_y = 0
         self._ui_width = DEFAULT_UI_WIDTH
         self._opacity = 0  # 初始透明
+
+    def set_ui_opacity(self, opacity):
+        """设置透明度并发射信号"""
+        if opacity != self._opacity:
+            self._opacity = opacity
+            self.opacityChanged.emit()
 
     def update_lessons(self):
         entries = self.plugin.api.runtime.current_day_entries
@@ -111,7 +117,7 @@ class LessonsBackend(QObject):
             anchor = prefs.widgets_anchor
             offset_x = prefs.widgets_offset_x
             offset_y = prefs.widgets_offset_y
-            hide = interactions.hide.state  # 当前隐藏状态
+            hide = interactions.hide.state
 
             screen = QGuiApplication.primaryScreen().availableGeometry()
             screen_width = screen.width()
@@ -125,7 +131,6 @@ class LessonsBackend(QObject):
             else:
                 vert, horz = parts[0].lower(), parts[1].lower()
 
-                # 计算 y
                 if vert == "top":
                     if hide and horz == "center":
                         y = -UI_HEIGHT + 24
@@ -139,7 +144,6 @@ class LessonsBackend(QObject):
                 else:
                     y = 132
 
-                # 计算 x
                 if horz == "left":
                     if hide:
                         x = -ui_width + 24
@@ -159,7 +163,6 @@ class LessonsBackend(QObject):
             self._ui_y = int(y)
             self.positionChanged.emit()
 
-            # 根据隐藏状态更新透明度
             new_opacity = 0 if hide else 1
             if new_opacity != self._opacity:
                 self._opacity = new_opacity
@@ -172,13 +175,11 @@ class LessonsBackend(QObject):
             self._ui_x = (screen.width() - self._ui_width) // 2
             self._ui_y = 132
             self.positionChanged.emit()
-            # 透明度保底设为1
             if self._opacity != 1:
                 self._opacity = 1
                 self.opacityChanged.emit()
 
     def request_scroll_to_current(self):
-        """请求将当前高亮课程滚动到视野内"""
         target_id = self._current_lesson_id or self._next_lesson_id
         if not target_id:
             return
@@ -412,14 +413,12 @@ class Plugin(CW2Plugin):
             plugin_logger.debug(f"计算小组件宽度失败: {e}")
 
     def _start_scroll_timer(self):
-        """启动每秒滚动请求定时器"""
         self._scroll_timer = QTimer()
         self._scroll_timer.timeout.connect(self._request_scroll)
         self._scroll_timer.start(1000)
         plugin_logger.debug("已启动滚动请求定时器")
 
     def _request_scroll(self):
-        """请求滚动到当前高亮课程"""
         if self.backend:
             self.backend.request_scroll_to_current()
 
@@ -471,12 +470,23 @@ class Plugin(CW2Plugin):
 
             self._update_mask()
 
-            self.window.show()
-            plugin_logger.info("窗口已显示")
+            # 获取当前隐藏状态
+            hide = self._configs.interactions.hide.state
 
-            # 淡入动画（从0到1）
-            self.backend._opacity = 1
-            self.backend.opacityChanged.emit()
+            # 强制设置透明度为0，确保窗口显示时透明
+            self.backend.set_ui_opacity(0)
+
+            # 延迟显示窗口并启动淡入
+            def show_and_fade():
+                self.window.show()
+                plugin_logger.info("窗口已显示，开始淡入")
+                # 再次确保透明度为0
+                self.backend.set_ui_opacity(0)
+                # 延迟50ms后淡入到目标透明度
+                target = 0 if hide else 1
+                QTimer.singleShot(50, lambda: self.backend.set_ui_opacity(target))
+
+            QTimer.singleShot(0, show_and_fade)
 
             self._sync_window_layer()
             self._start_width_polling()
