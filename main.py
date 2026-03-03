@@ -32,12 +32,13 @@ class LessonsBackend(QObject):
     widthChanged = Signal()
     opacityChanged = Signal()
     scrollRequested = Signal(int)
+    modeChanged = Signal()
 
     def __init__(self, plugin):
         super().__init__()
         self.plugin = plugin
-        self._lessons = []               # 仅课程列表（用于高亮和滚动）
-        self._display_items = []          # 显示项列表（包含课程和分隔符）
+        self._lessons = []
+        self._display_items = []
         self._current_lesson_id = ""
         self._next_lesson_id = ""
         self._current_state = 0
@@ -46,6 +47,7 @@ class LessonsBackend(QObject):
         self._ui_y = 0
         self._ui_width = DEFAULT_UI_WIDTH
         self._opacity = 0
+        self._mode = "normal"
 
     def set_ui_opacity(self, opacity):
         if opacity != self._opacity:
@@ -64,11 +66,9 @@ class LessonsBackend(QObject):
 
         self.plugin._update_subjects_map()
 
-        # 所有原始条目（已排序）
         all_entries = entries
         n = len(all_entries)
 
-        # 判断每个条目是否应显示
         def should_show(entry):
             e_type = entry.get("type", "")
             if e_type == "break":
@@ -79,9 +79,8 @@ class LessonsBackend(QObject):
 
         show_flags = [should_show(e) for e in all_entries]
 
-        # 构建显示项列表
         display_items = []
-        lessons = []               # 仅课程（用于后续高亮）
+        lessons = []
         filtered_ids = set()
 
         for i, entry in enumerate(all_entries):
@@ -104,29 +103,24 @@ class LessonsBackend(QObject):
             lessons.append(lesson_item)
             filtered_ids.add(entry_id)
 
-            # 检查与下一个条目之间的空闲时间
             if i < n - 1:
                 next_entry = all_entries[i + 1]
-                # 如果下一个条目显示，则计算间隔
                 if show_flags[i + 1]:
                     current_end = _time_to_minutes(entry.get("endTime"))
                     next_start = _time_to_minutes(next_entry.get("startTime"))
                     gap = next_start - current_end
-                    if gap >= 15:  # 大于等于15分钟
-                        # 插入分隔符
+                    if gap >= 15:
                         display_items.append({"type": "separator"})
 
         self._display_items = display_items
         self._lessons = lessons
 
-        # 更新当前课程ID（只考虑课程）
         current = self.plugin.api.runtime.current_entry
         if current and current.get("type") == "class":
             self._current_lesson_id = current.get("id", "")
         else:
             self._current_lesson_id = ""
 
-        # 更新下一节课ID
         next_lesson_id = ""
         next_entries = self.plugin.api.runtime.next_entries
         if next_entries:
@@ -205,20 +199,17 @@ class LessonsBackend(QObject):
             self.positionChanged.emit()
 
             new_opacity = 0 if hide else 1
-            if new_opacity != self._opacity:
-                self._opacity = new_opacity
-                self.opacityChanged.emit()
+            # 统一通过 set_ui_opacity 设置透明度，确保信号发射和条件检查
+            self.set_ui_opacity(new_opacity)
 
-            plugin_logger.debug(f"更新位置: ({self._ui_x}, {self._ui_y}) 宽度: {ui_width} 隐藏: {hide}")
+            # plugin_logger.debug(f"更新位置: ({self._ui_x}, {self._ui_y}) 宽度: {ui_width} 隐藏: {hide}")
         except Exception as e:
             plugin_logger.error(f"计算位置失败: {e}")
             screen = QGuiApplication.primaryScreen().availableGeometry()
             self._ui_x = (screen.width() - self._ui_width) // 2
             self._ui_y = 132
             self.positionChanged.emit()
-            if self._opacity != 1:
-                self._opacity = 1
-                self.opacityChanged.emit()
+            self.set_ui_opacity(1)
 
     def request_scroll_to_current(self):
         target_id = self._current_lesson_id or self._next_lesson_id
@@ -226,13 +217,32 @@ class LessonsBackend(QObject):
             return
         for i, lesson in enumerate(self._lessons):
             if lesson["id"] == target_id:
-                # 需要在显示列表中找到对应的索引
-                # 简单方法：遍历 _display_items，找到相同 id 的课程
                 for idx, item in enumerate(self._display_items):
                     if item.get("type") == "lesson" and item.get("id") == target_id:
                         self.scrollRequested.emit(idx)
                         break
                 break
+
+    def _set_mode(self, mode):
+        if self._mode != mode:
+            self._mode = mode
+            self.modeChanged.emit()
+
+    @Slot()
+    def enterWhiteboard(self):
+        self._set_mode("whiteboard")
+
+    @Slot()
+    def enterBlackboard(self):
+        self._set_mode("blackboard")
+
+    @Slot()
+    def exitSpecialMode(self):
+        self._set_mode("normal")
+
+    @Property(str, notify=modeChanged)
+    def mode(self):
+        return self._mode
 
     @Property(int, notify=positionChanged)
     def uiX(self):
@@ -280,6 +290,7 @@ class Plugin(CW2Plugin):
         self.engine = None
         self.window = None
         self.ui_item = None
+        self.ui_loader = None  # 新增：保存 Loader 对象
         self._ui_ready_checked = False
         self._layer_timer = None
         self._width_timer = None
@@ -332,6 +343,12 @@ class Plugin(CW2Plugin):
         self.backend.update_lessons()
         self.backend.set_dark_theme(self.is_dark_theme)
         self.backend.update_position()
+        self.backend.modeChanged.connect(self._on_mode_changed)
+        plugin_logger.debug("已连接 modeChanged 信号")
+
+        # 连接后端位置和宽度变化信号，用于更新 mask（作为备份）
+        self.backend.positionChanged.connect(self._update_mask)
+        self.backend.widthChanged.connect(self._update_mask)
 
         self.engine = QQmlApplicationEngine()
         self.engine.rootContext().setContextProperty("lessonsBackend", self.backend)
@@ -375,7 +392,9 @@ class Plugin(CW2Plugin):
         plugin_logger.debug("已启动窗口层级同步定时器")
 
     def _sync_window_layer(self):
-        if not self.window or not self.ui_item:
+        if not self.window or not self.backend:
+            return
+        if self.backend.mode != "normal":
             return
         try:
             main_window = self.api._app.widgets_window
@@ -498,6 +517,7 @@ class Plugin(CW2Plugin):
                 plugin_logger.error("无法找到 uiLoader")
                 return
 
+            self.ui_loader = loader  # 保存 Loader 对象
             self.ui_item = loader.property("item")
             if not self.ui_item:
                 plugin_logger.error("UI 项未加载")
@@ -509,10 +529,11 @@ class Plugin(CW2Plugin):
             h = self.ui_item.height()
             plugin_logger.debug(f"UI 项初始位置: ({x}, {y}, {w}, {h})")
 
-            self.ui_item.widthChanged.connect(self._update_mask)
-            self.ui_item.heightChanged.connect(self._update_mask)
-            self.ui_item.xChanged.connect(self._update_mask)
-            self.ui_item.yChanged.connect(self._update_mask)
+            # 连接 Loader 的位置变化信号，确保动画期间 mask 实时跟随
+            self.ui_loader.xChanged.connect(self._update_mask)
+            self.ui_loader.yChanged.connect(self._update_mask)
+            self.ui_loader.widthChanged.connect(self._update_mask)
+            self.ui_loader.heightChanged.connect(self._update_mask)
 
             self._update_mask()
 
@@ -536,17 +557,44 @@ class Plugin(CW2Plugin):
             plugin_logger.error(f"处理 UI 就绪失败: {e}")
 
     def _update_mask(self):
-        if not self.window or not self.ui_item:
+        if not self.window:
+            return
+        # 特殊模式下清除 mask
+        if self.backend and self.backend.mode != "normal":
+            self.window.setMask(QRegion())
             return
         try:
-            x = int(self.ui_item.x())
-            y = int(self.ui_item.y())
-            w = int(self.ui_item.width())
-            h = int(self.ui_item.height())
+            # 优先使用 Loader 的实时位置（动画期间平滑变化）
+            if self.ui_loader:
+                x = int(self.ui_loader.property("x"))
+                y = int(self.ui_loader.property("y"))
+                w = int(self.ui_loader.property("width"))
+                h = int(self.ui_loader.property("height"))
+            elif self.backend:
+                x = int(self.backend.uiX)
+                y = int(self.backend.uiY)
+                w = int(self.backend.uiWidth)
+                h = UI_HEIGHT
+            else:
+                return
             region = QRegion(x, y, w, h)
             self.window.setMask(region)
+            # plugin_logger.debug(f"mask 已更新: ({x}, {y}, {w}, {h})")
         except Exception as e:
             plugin_logger.error(f"更新 mask 失败: {e}")
+
+    def _on_mode_changed(self):
+        mode = self.backend.mode
+        if mode == "normal":
+            self.window.setMask(QRegion())  # 临时清除mask，等待后续更新
+            self._update_mask()
+            # 正常模式下，后续同步定时器会处理置底
+        else:
+            # 特殊模式：清除mask，并强制置顶
+            self.window.setMask(QRegion())
+            # 但需要确保窗口置顶（raise 确保它在其他窗口之上）
+            self.window.raise_()
+            self.window.activateWindow()
 
     def on_unload(self):
         if self._scroll_timer:
@@ -566,12 +614,12 @@ class Plugin(CW2Plugin):
         if self._theme_timer:
             self._theme_timer.stop()
             self._theme_timer.deleteLater()
-        if self.ui_item:
+        if self.ui_loader:
             try:
-                self.ui_item.widthChanged.disconnect(self._update_mask)
-                self.ui_item.heightChanged.disconnect(self._update_mask)
-                self.ui_item.xChanged.disconnect(self._update_mask)
-                self.ui_item.yChanged.disconnect(self._update_mask)
+                self.ui_loader.xChanged.disconnect(self._update_mask)
+                self.ui_loader.yChanged.disconnect(self._update_mask)
+                self.ui_loader.widthChanged.disconnect(self._update_mask)
+                self.ui_loader.heightChanged.disconnect(self._update_mask)
             except:
                 pass
         if self.window:

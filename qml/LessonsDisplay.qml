@@ -8,31 +8,42 @@ Item {
     id: root
     height: 54
 
+    // 根据模式计算实际暗色主题
+    readonly property bool effectiveDarkTheme: {
+        if (lessonsBackend.mode === "whiteboard") return false
+        if (lessonsBackend.mode === "blackboard") return true
+        return lessonsBackend.isDarkTheme
+    }
+
     // 背景颜色（带透明度，仿 Widget.qml）
-    readonly property color bgColor: lessonsBackend.isDarkTheme
+    readonly property color bgColor: effectiveDarkTheme
         ? Qt.rgba(30/255, 29/255, 34/255, 0.65)   // #1E1D22 半透明
         : Qt.rgba(251/255, 250/255, 255/255, 0.7) // #FBFAFF 半透明
 
     // 边框基础颜色（用于渐变）
-    readonly property color borderBaseColor: lessonsBackend.isDarkTheme
+    readonly property color borderBaseColor: effectiveDarkTheme
         ? Qt.rgba(255/255, 255/255, 255/255, 0.4)
         : Qt.rgba(255/255, 255/255, 255/255, 1)
 
     readonly property real borderWidth: 1.5
     readonly property real radius: 27
 
-    // 背景矩形（纯色，无边框）
+    // 背景矩形（纯色，无边框）—— 添加颜色动画
     Rectangle {
         id: backgroundRect
         anchors.fill: parent
         radius: root.radius
         color: bgColor
+        Behavior on color {
+            ColorAnimation { duration: 300; easing.type: Easing.OutCubic }
+        }
     }
 
-    // 渐变边框层
+    // 渐变边框层（仅在正常模式下显示）
     Item {
         anchors.fill: parent
         z: 1
+        visible: lessonsBackend.mode === "normal"
 
         Rectangle {
             id: borderRect
@@ -83,8 +94,8 @@ Item {
             implicitHeight: 30
             icon.name: "ic_fluent_arrow_swap_20_regular"
             anchors.verticalCenter: parent.verticalCenter
-            highlighted: lessonsBackend.isDarkTheme
-            primaryColor: lessonsBackend.isDarkTheme ? "#444" : undefined
+            highlighted: effectiveDarkTheme
+            primaryColor: effectiveDarkTheme ? "#444" : undefined
         }
 
         Item { width: 16; height: parent.height }
@@ -96,7 +107,7 @@ Item {
             width: calculateSpacerWidth()
         }
 
-        // 课程列表（支持自动滚动和用户交互暂停）
+        // ========== 课程列表（完全保留原有逻辑） ==========
         ListView {
             id: lessonsListView
             orientation: ListView.Horizontal
@@ -113,8 +124,8 @@ Item {
             // 自动滚动相关属性
             property bool autoScrollEnabled: true
             property bool userInteracted: false
-            property bool hovered: false   // 鼠标悬停状态
-            property bool scrollBarVisible: false  // 实际控制滚动条显示
+            property bool hovered: false
+            property bool scrollBarVisible: false
 
             // 滚动条隐藏延迟定时器
             Timer {
@@ -125,7 +136,6 @@ Item {
                 }
             }
 
-            // 更新滚动条显示状态
             function updateScrollBarVisible(show) {
                 if (show) {
                     scrollBarVisible = true
@@ -135,13 +145,11 @@ Item {
                 }
             }
 
-            // 暂停自动滚动（用户交互开始）
             function pauseAutoScroll() {
                 autoScrollEnabled = false
                 userInteracted = true
             }
 
-            // 用户交互后延迟恢复定时器（4000ms）
             Timer {
                 id: userInteractionTimer
                 interval: 4000
@@ -154,18 +162,15 @@ Item {
                 }
             }
 
-            // 检测用户滚动开始（包括拖动内容）
             onMovementStarted: {
                 pauseAutoScroll()
                 updateScrollBarVisible(true)
             }
 
-            // 拖动结束时重启计时器
             onMovementEnded: {
                 userInteractionTimer.restart()
             }
 
-            // 鼠标悬停检测
             HoverHandler {
                 id: listHoverHandler
                 acceptedDevices: PointerDevice.Mouse
@@ -179,7 +184,6 @@ Item {
                 }
             }
 
-            // 鼠标区域：处理滚轮事件（带动画）
             MouseArea {
                 anchors.fill: parent
                 acceptedButtons: Qt.NoButton
@@ -213,7 +217,6 @@ Item {
                     }
                 }
 
-                // 课程项组件
                 Component {
                     id: lessonComponent
                     Item {
@@ -243,17 +246,19 @@ Item {
                                     (lessonsBackend.currentState === 0 && modelData.id === lessonsBackend.nextLessonId)) {
                                     return "#ffffff"
                                 }
-                                return lessonsBackend.isDarkTheme ? "#ffffff" : "#000000"
+                                return effectiveDarkTheme ? "#ffffff" : "#000000"
+                            }
+                            Behavior on color {
+                                ColorAnimation { duration: 300; easing.type: Easing.OutCubic }
                             }
                         }
                     }
                 }
 
-                // 分隔符组件
                 Component {
                     id: separatorComponent
                     Item {
-                        width: 10  // 2px 竖线 + 左右各4px间距
+                        width: 10
                         height: 40
 
                         Rectangle {
@@ -262,8 +267,8 @@ Item {
                             anchors.centerIn: parent
                             gradient: Gradient {
                                 GradientStop { position: 0.0; color: "transparent" }
-                                GradientStop { position: 0.4; color: lessonsBackend.isDarkTheme ? Qt.rgba(1,1,1,0.5) : Qt.rgba(0,0,0,0.5) }
-                                GradientStop { position: 0.6; color: lessonsBackend.isDarkTheme ? Qt.rgba(1,1,1,0.5) : Qt.rgba(0,0,0,0.5) }
+                                GradientStop { position: 0.4; color: effectiveDarkTheme ? Qt.rgba(1,1,1,0.5) : Qt.rgba(0,0,0,0.5) }
+                                GradientStop { position: 0.6; color: effectiveDarkTheme ? Qt.rgba(1,1,1,0.5) : Qt.rgba(0,0,0,0.5) }
                                 GradientStop { position: 1.0; color: "transparent" }
                             }
                         }
@@ -271,7 +276,7 @@ Item {
                 }
             }
 
-            // 滚动条，仅在 scrollBarVisible 为真且内容超出时显示
+            // 滚动条
             ScrollBar.horizontal: ScrollBar {
                 id: hScrollBar
                 policy: ScrollBar.AsNeeded
@@ -292,25 +297,22 @@ Item {
                 }
             }
 
-            // 从后端接收滚动请求
             Connections {
                 target: lessonsBackend
                 function onScrollRequested(index) {
-                    // 注意：index 是基于课程列表的索引，但现在模型包含分隔符，索引可能不匹配
-                    // 需要根据 displayItems 重新计算目标索引。为了简化，这里不做处理，因为自动滚动由每秒请求触发 scrollToCurrentLesson
+                    if (lessonsListView.autoScrollEnabled && lessonsListView.contentWidth > lessonsListView.width) {
+                        lessonsListView.scrollToIndex(index)
+                    }
                 }
             }
 
-            // 滚动到指定索引（左20%位置，带动画）
             function scrollToIndex(index) {
                 forceLayout()
                 if (!autoScrollEnabled) return
                 if (contentWidth <= width) return
                 var item = itemAtIndex(index)
                 if (!item) return
-                // 左20%位置
                 var targetX = item.x - width * 0.2
-                // 边界限制：不能小于0，不能大于 contentWidth - width
                 targetX = Math.max(0, Math.min(targetX, contentWidth - width))
                 if (Math.abs(contentX - targetX) < 1) return
                 if (scrollAnimation.running) scrollAnimation.stop()
@@ -318,7 +320,6 @@ Item {
                 scrollAnimation.start()
             }
 
-            // 内部滚动到当前高亮课程
             function scrollToCurrentLesson() {
                 var targetId = lessonsBackend.currentLessonId || lessonsBackend.nextLessonId
                 if (!targetId) return
@@ -331,7 +332,6 @@ Item {
                 }
             }
 
-            // 滚动动画（供自动滚动和滚轮共用）
             NumberAnimation {
                 id: scrollAnimation
                 target: lessonsListView
@@ -340,7 +340,6 @@ Item {
                 easing.type: Easing.OutCubic
             }
 
-            // 监听课程变化，立即滚动（如果允许）
             Connections {
                 target: lessonsBackend
                 function onCurrentLessonIdChanged() {
@@ -354,6 +353,7 @@ Item {
                 }
             }
         }
+        // ========== 课程列表结束 ==========
 
         // 右侧弹性空白
         Item {
@@ -364,32 +364,51 @@ Item {
 
         Item { width: 16; height: parent.height }
 
-        // 白板模式按钮
+        // 按钮1：白板模式/切换
         RoundButton {
-            id: lightButton
+            id: button1
             implicitWidth: 30
             implicitHeight: 30
-            enabled: false
-            icon.name: "ic_fluent_weather_sunny_20_regular"
+            icon.name: {
+                if (lessonsBackend.mode === "whiteboard") return "ic_fluent_weather_moon_20_regular"
+                if (lessonsBackend.mode === "blackboard") return "ic_fluent_weather_sunny_20_regular"
+                return "ic_fluent_weather_sunny_20_regular" // 正常模式为白板模式
+            }
             anchors.verticalCenter: parent.verticalCenter
-            highlighted: lessonsBackend.isDarkTheme
-            primaryColor: lessonsBackend.isDarkTheme ? "#444" : undefined
-            onClicked: console.log("Light mode clicked")
+            highlighted: effectiveDarkTheme
+            primaryColor: effectiveDarkTheme ? "#444" : undefined
+            onClicked: {
+                if (lessonsBackend.mode === "normal") {
+                    lessonsBackend.enterWhiteboard()
+                } else if (lessonsBackend.mode === "whiteboard") {
+                    lessonsBackend.enterBlackboard()
+                } else if (lessonsBackend.mode === "blackboard") {
+                    lessonsBackend.enterWhiteboard()
+                }
+            }
         }
 
         Item { width: 12; height: parent.height }
 
-        // 熄屏模式按钮
+        // 按钮2：熄屏模式/退出
         RoundButton {
-            id: darkButton
+            id: button2
             implicitWidth: 30
             implicitHeight: 30
-            enabled: false
-            icon.name: "ic_fluent_weather_moon_20_regular"
+            icon.name: {
+                if (lessonsBackend.mode !== "normal") return "ic_fluent_arrow_exit_20_regular"
+                return "ic_fluent_weather_moon_20_regular" // 正常模式为熄屏模式
+            }
             anchors.verticalCenter: parent.verticalCenter
-            highlighted: lessonsBackend.isDarkTheme
-            primaryColor: lessonsBackend.isDarkTheme ? "#444" : undefined
-            onClicked: console.log("Dark mode clicked")
+            highlighted: effectiveDarkTheme
+            primaryColor: effectiveDarkTheme ? "#444" : undefined
+            onClicked: {
+                if (lessonsBackend.mode === "normal") {
+                    lessonsBackend.enterBlackboard()
+                } else {
+                    lessonsBackend.exitSpecialMode()
+                }
+            }
         }
 
         Item { width: 13; height: parent.height }
@@ -411,7 +430,6 @@ Item {
         return Math.max(0, (availableWidth - listWidth) / 2)
     }
 
-    // 当内容或尺寸变化时更新布局，并确保滚动位置不越界
     Connections {
         target: lessonsBackend
         function onLessonsUpdated() {
@@ -427,7 +445,6 @@ Item {
         }
     }
 
-    // 初始绑定
     Component.onCompleted: {
         leftSpacer.width = Qt.binding(calculateSpacerWidth)
         rightSpacer.width = Qt.binding(calculateSpacerWidth)
