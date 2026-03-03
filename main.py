@@ -19,6 +19,12 @@ DEFAULT_UI_WIDTH = 100
 UI_HEIGHT = 54
 
 
+def _time_to_minutes(time_str: str) -> int:
+    """将 "HH:MM" 格式的时间转换为分钟数"""
+    h, m = map(int, time_str.split(':'))
+    return h * 60 + m
+
+
 class LessonsBackend(QObject):
     lessonsUpdated = Signal()
     themeChanged = Signal(bool)
@@ -30,7 +36,8 @@ class LessonsBackend(QObject):
     def __init__(self, plugin):
         super().__init__()
         self.plugin = plugin
-        self._lessons = []
+        self._lessons = []               # 仅课程列表（用于高亮和滚动）
+        self._display_items = []          # 显示项列表（包含课程和分隔符）
         self._current_lesson_id = ""
         self._next_lesson_id = ""
         self._current_state = 0
@@ -38,10 +45,9 @@ class LessonsBackend(QObject):
         self._ui_x = 0
         self._ui_y = 0
         self._ui_width = DEFAULT_UI_WIDTH
-        self._opacity = 0  # 初始透明
+        self._opacity = 0
 
     def set_ui_opacity(self, opacity):
-        """设置透明度并发射信号"""
         if opacity != self._opacity:
             self._opacity = opacity
             self.opacityChanged.emit()
@@ -50,6 +56,7 @@ class LessonsBackend(QObject):
         entries = self.plugin.api.runtime.current_day_entries
         if not entries:
             self._lessons = []
+            self._display_items = []
             self._current_lesson_id = ""
             self._next_lesson_id = ""
             self.lessonsUpdated.emit()
@@ -57,25 +64,59 @@ class LessonsBackend(QObject):
 
         self.plugin._update_subjects_map()
 
-        lessons = []
+        # 所有原始条目（已排序）
+        all_entries = entries
+        n = len(all_entries)
+
+        # 判断每个条目是否应显示
+        def should_show(entry):
+            e_type = entry.get("type", "")
+            if e_type == "break":
+                return False
+            if e_type == "activity" and entry.get("title") in ["大课间", "升旗"]:
+                return False
+            return True
+
+        show_flags = [should_show(e) for e in all_entries]
+
+        # 构建显示项列表
+        display_items = []
+        lessons = []               # 仅课程（用于后续高亮）
         filtered_ids = set()
-        for entry in entries:
+
+        for i, entry in enumerate(all_entries):
+            if not show_flags[i]:
+                continue
+
             entry_id = entry.get("id", "")
             entry_type = entry.get("type", "")
             title = entry.get("title", "")
-            # 排除规则：课间和特定活动
-            if entry_type == "break":
-                continue
-            if entry_type == "activity" and title in ["大课间", "升旗"]:
-                continue
             abbr = self.plugin._get_entry_abbr(entry)
             is_class = (entry_type == "class")
-            lessons.append({
+
+            lesson_item = {
+                "type": "lesson",
                 "id": entry_id,
                 "abbr": abbr,
                 "isClass": is_class
-            })
+            }
+            display_items.append(lesson_item)
+            lessons.append(lesson_item)
             filtered_ids.add(entry_id)
+
+            # 检查与下一个条目之间的空闲时间
+            if i < n - 1:
+                next_entry = all_entries[i + 1]
+                # 如果下一个条目显示，则计算间隔
+                if show_flags[i + 1]:
+                    current_end = _time_to_minutes(entry.get("endTime"))
+                    next_start = _time_to_minutes(next_entry.get("startTime"))
+                    gap = next_start - current_end
+                    if gap >= 15:  # 大于等于15分钟
+                        # 插入分隔符
+                        display_items.append({"type": "separator"})
+
+        self._display_items = display_items
         self._lessons = lessons
 
         # 更新当前课程ID（只考虑课程）
@@ -185,7 +226,12 @@ class LessonsBackend(QObject):
             return
         for i, lesson in enumerate(self._lessons):
             if lesson["id"] == target_id:
-                self.scrollRequested.emit(i)
+                # 需要在显示列表中找到对应的索引
+                # 简单方法：遍历 _display_items，找到相同 id 的课程
+                for idx, item in enumerate(self._display_items):
+                    if item.get("type") == "lesson" and item.get("id") == target_id:
+                        self.scrollRequested.emit(idx)
+                        break
                 break
 
     @Property(int, notify=positionChanged)
@@ -205,8 +251,8 @@ class LessonsBackend(QObject):
         return self._opacity
 
     @Property(list, notify=lessonsUpdated)
-    def lessons(self):
-        return self._lessons
+    def displayItems(self):
+        return self._display_items
 
     @Property(str, notify=lessonsUpdated)
     def currentLessonId(self):
@@ -470,19 +516,13 @@ class Plugin(CW2Plugin):
 
             self._update_mask()
 
-            # 获取当前隐藏状态
             hide = self._configs.interactions.hide.state
-
-            # 强制设置透明度为0，确保窗口显示时透明
             self.backend.set_ui_opacity(0)
 
-            # 延迟显示窗口并启动淡入
             def show_and_fade():
                 self.window.show()
                 plugin_logger.info("窗口已显示，开始淡入")
-                # 再次确保透明度为0
                 self.backend.set_ui_opacity(0)
-                # 延迟50ms后淡入到目标透明度
                 target = 0 if hide else 1
                 QTimer.singleShot(50, lambda: self.backend.set_ui_opacity(target))
 

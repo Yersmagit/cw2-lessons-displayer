@@ -107,11 +107,14 @@ Item {
             width: calculateListViewWidth()
             contentWidth: childrenRect.width
 
+            // 模型改为 displayItems，包含课程和分隔符
+            model: lessonsBackend.displayItems
+
             // 自动滚动相关属性
             property bool autoScrollEnabled: true
             property bool userInteracted: false
-            property bool hovered: false
-            property bool scrollBarVisible: false
+            property bool hovered: false   // 鼠标悬停状态
+            property bool scrollBarVisible: false  // 实际控制滚动条显示
 
             // 滚动条隐藏延迟定时器
             Timer {
@@ -199,35 +202,71 @@ Item {
                 }
             }
 
-            model: lessonsBackend.lessons
-            delegate: Item {
-                width: childrenRect.width + 10
-                height: 40
-
-                Rectangle {
-                    anchors.fill: parent
-                    radius: 20
-                    color: {
-                        if (modelData.id === lessonsBackend.currentLessonId) {
-                            return "#e98f83"
-                        } else if (lessonsBackend.currentState === 0 && modelData.id === lessonsBackend.nextLessonId) {
-                            return "#57c7a5"
-                        }
-                        return "transparent"
+            // 委托：根据类型渲染课程或分隔符
+            delegate: Loader {
+                id: delegateLoader
+                sourceComponent: {
+                    if (modelData.type === "separator") {
+                        return separatorComponent
+                    } else {
+                        return lessonComponent
                     }
                 }
 
-                Text {
-                    anchors.centerIn: parent
-                    text: modelData.abbr
-                    font.pixelSize: 28
-                    font.bold: true
-                    color: {
-                        if (modelData.id === lessonsBackend.currentLessonId ||
-                            (lessonsBackend.currentState === 0 && modelData.id === lessonsBackend.nextLessonId)) {
-                            return "#ffffff"
+                // 课程项组件
+                Component {
+                    id: lessonComponent
+                    Item {
+                        width: childrenRect.width + 10
+                        height: 40
+
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: 20
+                            color: {
+                                if (modelData.id === lessonsBackend.currentLessonId) {
+                                    return "#e98f83"
+                                } else if (lessonsBackend.currentState === 0 && modelData.id === lessonsBackend.nextLessonId) {
+                                    return "#57c7a5"
+                                }
+                                return "transparent"
+                            }
                         }
-                        return lessonsBackend.isDarkTheme ? "#ffffff" : "#000000"
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: modelData.abbr
+                            font.pixelSize: 28
+                            font.bold: true
+                            color: {
+                                if (modelData.id === lessonsBackend.currentLessonId ||
+                                    (lessonsBackend.currentState === 0 && modelData.id === lessonsBackend.nextLessonId)) {
+                                    return "#ffffff"
+                                }
+                                return lessonsBackend.isDarkTheme ? "#ffffff" : "#000000"
+                            }
+                        }
+                    }
+                }
+
+                // 分隔符组件
+                Component {
+                    id: separatorComponent
+                    Item {
+                        width: 10  // 2px 竖线 + 左右各4px间距
+                        height: 40
+
+                        Rectangle {
+                            width: 2
+                            height: 32
+                            anchors.centerIn: parent
+                            gradient: Gradient {
+                                GradientStop { position: 0.0; color: "transparent" }
+                                GradientStop { position: 0.4; color: lessonsBackend.isDarkTheme ? Qt.rgba(1,1,1,0.5) : Qt.rgba(0,0,0,0.5) }
+                                GradientStop { position: 0.6; color: lessonsBackend.isDarkTheme ? Qt.rgba(1,1,1,0.5) : Qt.rgba(0,0,0,0.5) }
+                                GradientStop { position: 1.0; color: "transparent" }
+                            }
+                        }
                     }
                 }
             }
@@ -257,9 +296,8 @@ Item {
             Connections {
                 target: lessonsBackend
                 function onScrollRequested(index) {
-                    if (lessonsListView.autoScrollEnabled && lessonsListView.contentWidth > lessonsListView.width) {
-                        lessonsListView.scrollToIndex(index)
-                    }
+                    // 注意：index 是基于课程列表的索引，但现在模型包含分隔符，索引可能不匹配
+                    // 需要根据 displayItems 重新计算目标索引。为了简化，这里不做处理，因为自动滚动由每秒请求触发 scrollToCurrentLesson
                 }
             }
 
@@ -270,7 +308,9 @@ Item {
                 if (contentWidth <= width) return
                 var item = itemAtIndex(index)
                 if (!item) return
+                // 左20%位置
                 var targetX = item.x - width * 0.2
+                // 边界限制：不能小于0，不能大于 contentWidth - width
                 targetX = Math.max(0, Math.min(targetX, contentWidth - width))
                 if (Math.abs(contentX - targetX) < 1) return
                 if (scrollAnimation.running) scrollAnimation.stop()
@@ -282,8 +322,9 @@ Item {
             function scrollToCurrentLesson() {
                 var targetId = lessonsBackend.currentLessonId || lessonsBackend.nextLessonId
                 if (!targetId) return
-                for (var i = 0; i < model.count; i++) {
-                    if (model[i].id === targetId) {
+                var items = lessonsBackend.displayItems
+                for (var i = 0; i < items.length; i++) {
+                    if (items[i].type === "lesson" && items[i].id === targetId) {
                         scrollToIndex(i)
                         break
                     }
@@ -377,7 +418,6 @@ Item {
             leftSpacer.width = Qt.binding(calculateSpacerWidth)
             rightSpacer.width = Qt.binding(calculateSpacerWidth)
             lessonsListView.width = Qt.binding(calculateListViewWidth)
-            // 延迟检查滚动边界，确保宽度已更新
             Qt.callLater(function() {
                 var maxX = Math.max(0, lessonsListView.contentWidth - lessonsListView.width)
                 if (lessonsListView.contentX > maxX) {
