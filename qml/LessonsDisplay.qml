@@ -107,13 +107,13 @@ Item {
             width: calculateSpacerWidth()
         }
 
-        // ========== 课程列表（完全保留原有逻辑） ==========
+        // ========== 课程列表 ==========
         ListView {
             id: lessonsListView
             orientation: ListView.Horizontal
             spacing: 5
             clip: true
-            height: 40
+            height: lessonsBackend.mode === "normal" ? 40 : 46
             anchors.verticalCenter: parent.verticalCenter
             width: calculateListViewWidth()
             contentWidth: childrenRect.width
@@ -220,13 +220,79 @@ Item {
                 Component {
                     id: lessonComponent
                     Item {
-                        width: childrenRect.width + 10
-                        height: 40
+                        id: lessonItem
+                        property bool isHighlighted: modelData.id === lessonsBackend.currentLessonId || (lessonsBackend.currentState === 0 && modelData.id === lessonsBackend.nextLessonId)
+                        property bool expanded: isHighlighted && lessonsBackend.mode !== "normal"
+                        // 折叠宽度固定为缩写宽度 + 10，不依赖模式
+                        property real foldedWidth: lessonAbbr.contentWidth + 10
+                        // 展开宽度根据实际内容计算（仅在特殊模式下使用）
+                        property real expandedWidth: 30 + 8 + lessonFullName.contentWidth + 22 + remainingText.implicitWidth + 20
+                        property real targetWidth: foldedWidth
+
+                        width: targetWidth
+                        height: lessonsBackend.mode === "normal" ? 40 : 46
+
+                        // 使用 Behavior 为宽度添加动画
+                        Behavior on width {
+                            NumberAnimation {
+                                duration: 300
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+
+                        // 更新目标宽度
+                        function updateTargetWidth() {
+                            var newWidth = expanded ? expandedWidth : foldedWidth
+                            // 阈值设为0.1，确保微小变化也能触发动画
+                            if (Math.abs(newWidth - targetWidth) > 0.1) {
+                                targetWidth = newWidth
+                            }
+                        }
+
+                        onExpandedChanged: updateTargetWidth()
+
+                        Connections {
+                            target: expanded ? lessonFullName : null
+                            function onContentWidthChanged() { updateTargetWidth() }
+                        }
+                        Connections {
+                            target: expanded ? remainingText : null
+                            function onContentWidthChanged() { updateTargetWidth() }
+                        }
+                        Connections {
+                            target: expanded ? lessonFullName : null
+                            function onImplicitWidthChanged() { updateTargetWidth() }
+                        }
+                        Connections {
+                            target: expanded ? remainingText : null
+                            function onImplicitWidthChanged() { updateTargetWidth() }
+                        }
+
+                        Component.onCompleted: updateTargetWidth()
 
                         Rectangle {
-                            anchors.fill: parent
-                            radius: 20
+                            x: 0
+                            y: 0
+                            width: parent.width
+                            height: parent.height
+                            radius: lessonsBackend.mode === "normal" ? 20 : 23
                             color: {
+                                if (isHighlighted) {
+                                    if (lessonsBackend.mode === "normal") {
+                                        return modelData.id === lessonsBackend.currentLessonId ? "#e98f83" : "#57c7a5"
+                                    } else {
+                                        return "transparent"
+                                    }
+                                }
+                                return "transparent"
+                            }
+                            border.width: {
+                                if (isHighlighted && lessonsBackend.mode !== "normal") {
+                                    return 2
+                                }
+                                return 0
+                            }
+                            border.color: {
                                 if (modelData.id === lessonsBackend.currentLessonId) {
                                     return "#e98f83"
                                 } else if (lessonsBackend.currentState === 0 && modelData.id === lessonsBackend.nextLessonId) {
@@ -236,15 +302,21 @@ Item {
                             }
                         }
 
+                        // 折叠时显示的缩写文本
                         Text {
+                            id: lessonAbbr
+                            visible: !expanded
                             anchors.centerIn: parent
                             text: modelData.abbr
                             font.pixelSize: 28
                             font.bold: true
                             color: {
-                                if (modelData.id === lessonsBackend.currentLessonId ||
-                                    (lessonsBackend.currentState === 0 && modelData.id === lessonsBackend.nextLessonId)) {
-                                    return "#ffffff"
+                                if (isHighlighted) {
+                                    if (lessonsBackend.mode === "normal") {
+                                        return "#ffffff"
+                                    } else {
+                                        return effectiveDarkTheme ? "#ffffff" : "#000000"
+                                    }
                                 }
                                 return effectiveDarkTheme ? "#ffffff" : "#000000"
                             }
@@ -252,14 +324,80 @@ Item {
                                 ColorAnimation { duration: 300; easing.type: Easing.OutCubic }
                             }
                         }
+
+                        // 展开时显示的内容
+                        Row {
+                            id: expandedRow
+                            visible: expanded
+                            anchors.left: parent.left
+                            anchors.leftMargin: 8
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 0
+
+                            Icon {
+                                id: iconItem
+                                width: 30
+                                height: parent.height
+                                size: 30
+                                icon: lessonsBackend.currentIcon
+                                color: effectiveDarkTheme ? "#ffffff" : "#000000"
+                            }
+
+                            Item { width: 8; height: 1 }
+
+                            Text {
+                                id: lessonFullName
+                                text: modelData.fullName
+                                font.pixelSize: 27
+                                font.bold: true
+                                color: effectiveDarkTheme ? "#ffffff" : "#000000"
+                                Behavior on color {
+                                    ColorAnimation { duration: 300; easing.type: Easing.OutCubic }
+                                }
+                            }
+
+                            Item {
+                                id: separatorContainer
+                                width: 22
+                                height: parent.height
+                                Rectangle {
+                                    width: 2
+                                    height: 28
+                                    anchors.centerIn: parent
+                                    gradient: Gradient {
+                                        GradientStop { position: 0.0; color: "transparent" }
+                                        GradientStop { position: 0.3; color: effectiveDarkTheme ? Qt.rgba(1,1,1,0.4) : Qt.rgba(0,0,0,0.4) }
+                                        GradientStop { position: 0.7; color: effectiveDarkTheme ? Qt.rgba(1,1,1,0.4) : Qt.rgba(0,0,0,0.4) }
+                                        GradientStop { position: 1.0; color: "transparent" }
+                                    }
+                                }
+                            }
+
+                            Text {
+                                id: remainingText
+                                text: lessonsBackend.currentRemainingText
+                                font.pixelSize: 16
+                                font.bold: true
+                                color: effectiveDarkTheme ? "#ffffff" : "#000000"
+                                verticalAlignment: Text.AlignVCenter
+                                height: parent.height
+                                Behavior on color {
+                                    ColorAnimation { duration: 300; easing.type: Easing.OutCubic }
+                                }
+                                // 当内容宽度变化时，更新父项目标宽度
+                                onContentWidthChanged: updateTargetWidth()
+                                onImplicitWidthChanged: updateTargetWidth()
+                            }
+                        }
                     }
                 }
 
+                // 分隔符组件
                 Component {
                     id: separatorComponent
                     Item {
                         width: 10
-                        height: 40
+                        height: lessonsBackend.mode === "normal" ? 40 : 46
 
                         Rectangle {
                             width: 2

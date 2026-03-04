@@ -48,11 +48,33 @@ class LessonsBackend(QObject):
         self._ui_width = DEFAULT_UI_WIDTH
         self._opacity = 0
         self._mode = "normal"
+        self._current_icon = "ic_fluent_question_20_regular"
+        self._current_remaining_text = ""
 
     def set_ui_opacity(self, opacity):
         if opacity != self._opacity:
             self._opacity = opacity
             self.opacityChanged.emit()
+
+    def _get_entry_full_name(self, entry):
+        """获取条目的全称"""
+        entry_type = entry.get("type", "")
+        if entry_type == "class":
+            subject_id = entry.get("subjectId")
+            if subject_id and subject_id in self.plugin._subjects_name_map:
+                return self.plugin._subjects_name_map[subject_id]
+            return "课程"
+        elif entry_type == "activity":
+            title = entry.get("title", "")
+            if title:
+                return title
+            return "活动"
+        elif entry_type == "break":
+            return "课间"
+        elif entry_type == "preparation":
+            return "预备"
+        else:
+            return "未知"
 
     def update_lessons(self):
         entries = self.plugin.api.runtime.current_day_entries
@@ -91,12 +113,14 @@ class LessonsBackend(QObject):
             entry_type = entry.get("type", "")
             title = entry.get("title", "")
             abbr = self.plugin._get_entry_abbr(entry)
+            full_name = self._get_entry_full_name(entry)
             is_class = (entry_type == "class")
 
             lesson_item = {
                 "type": "lesson",
                 "id": entry_id,
                 "abbr": abbr,
+                "fullName": full_name,
                 "isClass": is_class
             }
             display_items.append(lesson_item)
@@ -115,12 +139,14 @@ class LessonsBackend(QObject):
         self._display_items = display_items
         self._lessons = lessons
 
+        # 更新当前课程ID（只考虑课程）
         current = self.plugin.api.runtime.current_entry
         if current and current.get("type") == "class":
             self._current_lesson_id = current.get("id", "")
         else:
             self._current_lesson_id = ""
 
+        # 更新下一节课ID
         next_lesson_id = ""
         next_entries = self.plugin.api.runtime.next_entries
         if next_entries:
@@ -132,6 +158,69 @@ class LessonsBackend(QObject):
 
         self._current_state = 1 if self.plugin.api.runtime.current_status == "class" else 0
         self.lessonsUpdated.emit()
+
+        # 更新当前图标和剩余时间文本
+        self._update_current_icon_and_remaining()
+
+    def _update_current_icon_and_remaining(self):
+        """更新当前活动的图标和剩余时间文本"""
+        current_entry = self.plugin.api.runtime.current_entry
+        if not current_entry:
+            self._current_icon = "ic_fluent_question_20_regular"
+            self._current_remaining_text = ""
+            return
+
+        # 确定图标
+        subject_id = current_entry.get("subjectId")
+        icon_found = False
+        if subject_id:
+            try:
+                schedule = self.plugin.api._app.schedule_manager.schedule
+                if schedule and hasattr(schedule, 'subjects'):
+                    for subj in schedule.subjects:
+                        if subj.id == subject_id and subj.icon:
+                            self._current_icon = subj.icon
+                            icon_found = True
+                            break
+            except Exception as e:
+                plugin_logger.debug(f"获取科目图标失败: {e}")
+
+        if not icon_found:
+            # 无科目或未找到，根据类型使用默认图标
+            e_type = current_entry.get("type", "")
+            if e_type == "class":
+                self._current_icon = "ic_fluent_class_20_regular"
+            elif e_type == "break":
+                self._current_icon = "ic_fluent_shifts_activity_20_filled"
+            elif e_type == "activity":
+                self._current_icon = "ic_fluent_alert_20_regular"
+            elif e_type == "preparation":
+                self._current_icon = "ic_fluent_hourglass_half_20_regular"
+            else:
+                self._current_icon = "ic_fluent_question_20_regular"
+
+        # 计算剩余时间文本
+        remaining = self.plugin.api.runtime.remaining_time
+        if not remaining:
+            self._current_remaining_text = ""
+            return
+
+        minutes = remaining.get("minute", 0)
+        seconds = remaining.get("second", 0)
+        total_seconds = minutes * 60 + seconds
+
+        if total_seconds < 60:
+            secs = max(1, total_seconds)
+            if self._current_state == 1:  # 上课
+                self._current_remaining_text = f"剩 {secs} 秒"
+            else:  # 课间
+                self._current_remaining_text = f"{secs} 秒后上课"
+        else:
+            mins = round(total_seconds / 60)
+            if self._current_state == 1:
+                self._current_remaining_text = f"剩 {mins} 分钟"
+            else:
+                self._current_remaining_text = f"{mins} 分钟后上课"
 
     def set_dark_theme(self, is_dark):
         if self._is_dark != is_dark:
@@ -199,10 +288,8 @@ class LessonsBackend(QObject):
             self.positionChanged.emit()
 
             new_opacity = 0 if hide else 1
-            # 统一通过 set_ui_opacity 设置透明度，确保信号发射和条件检查
             self.set_ui_opacity(new_opacity)
 
-            # plugin_logger.debug(f"更新位置: ({self._ui_x}, {self._ui_y}) 宽度: {ui_width} 隐藏: {hide}")
         except Exception as e:
             plugin_logger.error(f"计算位置失败: {e}")
             screen = QGuiApplication.primaryScreen().availableGeometry()
@@ -280,17 +367,26 @@ class LessonsBackend(QObject):
     def isDarkTheme(self):
         return self._is_dark
 
+    @Property(str, notify=lessonsUpdated)
+    def currentIcon(self):
+        return self._current_icon
+
+    @Property(str, notify=lessonsUpdated)
+    def currentRemainingText(self):
+        return self._current_remaining_text
+
 
 class Plugin(CW2Plugin):
     def __init__(self, api):
         super().__init__(api)
         self._subjects_map = {}
+        self._subjects_name_map = {}  # 新增：科目ID到全名的映射
         self.backend = None
         self.is_dark_theme = False
         self.engine = None
         self.window = None
         self.ui_item = None
-        self.ui_loader = None  # 新增：保存 Loader 对象
+        self.ui_loader = None
         self._ui_ready_checked = False
         self._layer_timer = None
         self._width_timer = None
@@ -346,7 +442,6 @@ class Plugin(CW2Plugin):
         self.backend.modeChanged.connect(self._on_mode_changed)
         plugin_logger.debug("已连接 modeChanged 信号")
 
-        # 连接后端位置和宽度变化信号，用于更新 mask（作为备份）
         self.backend.positionChanged.connect(self._update_mask)
         self.backend.widthChanged.connect(self._update_mask)
 
@@ -517,7 +612,7 @@ class Plugin(CW2Plugin):
                 plugin_logger.error("无法找到 uiLoader")
                 return
 
-            self.ui_loader = loader  # 保存 Loader 对象
+            self.ui_loader = loader
             self.ui_item = loader.property("item")
             if not self.ui_item:
                 plugin_logger.error("UI 项未加载")
@@ -529,7 +624,6 @@ class Plugin(CW2Plugin):
             h = self.ui_item.height()
             plugin_logger.debug(f"UI 项初始位置: ({x}, {y}, {w}, {h})")
 
-            # 连接 Loader 的位置变化信号，确保动画期间 mask 实时跟随
             self.ui_loader.xChanged.connect(self._update_mask)
             self.ui_loader.yChanged.connect(self._update_mask)
             self.ui_loader.widthChanged.connect(self._update_mask)
@@ -559,12 +653,10 @@ class Plugin(CW2Plugin):
     def _update_mask(self):
         if not self.window:
             return
-        # 特殊模式下清除 mask
         if self.backend and self.backend.mode != "normal":
             self.window.setMask(QRegion())
             return
         try:
-            # 优先使用 Loader 的实时位置（动画期间平滑变化）
             if self.ui_loader:
                 x = int(self.ui_loader.property("x"))
                 y = int(self.ui_loader.property("y"))
@@ -579,20 +671,16 @@ class Plugin(CW2Plugin):
                 return
             region = QRegion(x, y, w, h)
             self.window.setMask(region)
-            # plugin_logger.debug(f"mask 已更新: ({x}, {y}, {w}, {h})")
         except Exception as e:
             plugin_logger.error(f"更新 mask 失败: {e}")
 
     def _on_mode_changed(self):
         mode = self.backend.mode
         if mode == "normal":
-            self.window.setMask(QRegion())  # 临时清除mask，等待后续更新
-            self._update_mask()
-            # 正常模式下，后续同步定时器会处理置底
-        else:
-            # 特殊模式：清除mask，并强制置顶
             self.window.setMask(QRegion())
-            # 但需要确保窗口置顶（raise 确保它在其他窗口之上）
+            self._update_mask()
+        else:
+            self.window.setMask(QRegion())
             self.window.raise_()
             self.window.activateWindow()
 
@@ -640,6 +728,7 @@ class Plugin(CW2Plugin):
         entries = self.api.runtime.current_day_entries
         if not entries:
             self._subjects_map = {}
+            self._subjects_name_map = {}
             return
 
         subjects = []
@@ -652,16 +741,14 @@ class Plugin(CW2Plugin):
 
         if subjects:
             self._subjects_map = {}
+            self._subjects_name_map = {}
             for subj in subjects:
                 abbr = subj.simplifiedName or (subj.name[0] if subj.name else "?")
                 self._subjects_map[subj.id] = abbr
+                self._subjects_name_map[subj.id] = subj.name
         else:
-            subject_ids = set()
-            for entry in entries:
-                subj_id = entry.get("subjectId")
-                if subj_id:
-                    subject_ids.add(subj_id)
-            self._subjects_map = {sid: "?" for sid in subject_ids}
+            self._subjects_map = {}
+            self._subjects_name_map = {}
 
     def _get_entry_abbr(self, entry):
         subject_id = entry.get("subjectId")
