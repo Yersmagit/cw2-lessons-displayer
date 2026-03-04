@@ -196,40 +196,52 @@ class LessonsBackend(QObject):
 
     def _update_current_icon_and_remaining(self):
         """更新当前活动的图标和剩余时间文本"""
+        # 获取当前条目（可能为空）
         current_entry = self.plugin.api.runtime.current_entry
-        if not current_entry:
-            self._current_icon = "ic_fluent_question_20_regular"
-            self._current_remaining_text = ""
-            return
 
-        # 确定图标
-        subject_id = current_entry.get("subjectId")
-        icon_found = False
-        if subject_id:
-            try:
-                schedule = self.plugin.api._app.schedule_manager.schedule
-                if schedule and hasattr(schedule, 'subjects'):
-                    for subj in schedule.subjects:
-                        if subj.id == subject_id and subj.icon:
-                            self._current_icon = subj.icon
-                            icon_found = True
-                            break
-            except Exception as e:
-                plugin_logger.debug(f"获取科目图标失败: {e}")
-
-        if not icon_found:
-            # 无科目或未找到，根据类型使用默认图标
-            e_type = current_entry.get("type", "")
-            if e_type == "class":
-                self._current_icon = "ic_fluent_class_20_regular"
-            elif e_type == "break":
-                self._current_icon = "ic_fluent_shifts_activity_20_filled"
-            elif e_type == "activity":
-                self._current_icon = "ic_fluent_alert_20_regular"
-            elif e_type == "preparation":
-                self._current_icon = "ic_fluent_hourglass_half_20_regular"
+        # 设置图标
+        if current_entry:
+            subject_id = current_entry.get("subjectId")
+            if subject_id:
+                try:
+                    schedule = self.plugin.api._app.schedule_manager.schedule
+                    if schedule and hasattr(schedule, 'subjects'):
+                        for subj in schedule.subjects:
+                            if subj.id == subject_id and subj.icon:
+                                self._current_icon = subj.icon
+                                break
+                        else:
+                            # 有科目但没有图标，使用类型默认图标
+                            e_type = current_entry.get("type", "")
+                            if e_type == "class":
+                                self._current_icon = "ic_fluent_class_20_regular"
+                            elif e_type == "break":
+                                self._current_icon = "ic_fluent_shifts_activity_20_filled"
+                            elif e_type == "activity":
+                                self._current_icon = "ic_fluent_alert_20_regular"
+                            elif e_type == "preparation":
+                                self._current_icon = "ic_fluent_hourglass_half_20_regular"
+                            else:
+                                self._current_icon = "ic_fluent_question_20_regular"
+                except Exception as e:
+                    plugin_logger.debug(f"获取科目图标失败: {e}")
+                    self._current_icon = "ic_fluent_question_20_regular"
             else:
-                self._current_icon = "ic_fluent_question_20_regular"
+                # 无科目，根据类型使用默认图标
+                e_type = current_entry.get("type", "")
+                if e_type == "class":
+                    self._current_icon = "ic_fluent_class_20_regular"
+                elif e_type == "break":
+                    self._current_icon = "ic_fluent_shifts_activity_20_filled"
+                elif e_type == "activity":
+                    self._current_icon = "ic_fluent_alert_20_regular"
+                elif e_type == "preparation":
+                    self._current_icon = "ic_fluent_hourglass_half_20_regular"
+                else:
+                    self._current_icon = "ic_fluent_question_20_regular"
+        else:
+            # 无当前活动（自由时间），使用 accessibility 图标
+            self._current_icon = "ic_fluent_accessibility_20_regular"
 
         # 计算剩余时间文本
         remaining = self.plugin.api.runtime.remaining_time
