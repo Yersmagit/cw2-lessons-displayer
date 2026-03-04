@@ -18,6 +18,9 @@ plugin_logger = logger.bind(plugin="lessons-displayer")
 DEFAULT_UI_WIDTH = 100
 UI_HEIGHT = 54
 
+# 自动关闭特殊模式功能开关
+AUTO_CLOSE_SPECIAL_MODE_ENABLED = True  # 设为 False 可禁用
+
 
 def _time_to_minutes(time_str: str) -> int:
     """将 "HH:MM" 格式的时间转换为分钟数"""
@@ -50,6 +53,12 @@ class LessonsBackend(QObject):
         self._mode = "normal"
         self._current_icon = "ic_fluent_question_20_regular"
         self._current_remaining_text = ""
+
+        # 自动关闭特殊模式相关
+        self._auto_close_timer = QTimer()
+        self._auto_close_timer.timeout.connect(self._on_auto_close_timeout)
+        self._auto_close_timer.setSingleShot(True)
+        self._in_auto_close_status = False
 
     def set_ui_opacity(self, opacity):
         if opacity != self._opacity:
@@ -161,6 +170,29 @@ class LessonsBackend(QObject):
 
         # 更新当前图标和剩余时间文本
         self._update_current_icon_and_remaining()
+        # 检查自动关闭条件
+        self._check_auto_close()
+
+    def _check_auto_close(self):
+        """检查是否满足自动关闭特殊模式的条件"""
+        current_status = self.plugin.api.runtime.current_status
+        is_auto_close_status = current_status in ("break", "activity", "free")
+        if is_auto_close_status:
+            if not self._in_auto_close_status:
+                # 刚进入 break/activity，启动计时器
+                self._in_auto_close_status = True
+                self._auto_close_timer.start(180000)  # 180秒
+        else:
+            if self._in_auto_close_status:
+                # 离开 break/activity，停止计时器
+                self._in_auto_close_status = False
+                self._auto_close_timer.stop()
+
+    def _on_auto_close_timeout(self):
+        """自动关闭超时处理"""
+        if self._mode != "normal" and AUTO_CLOSE_SPECIAL_MODE_ENABLED:
+            self.exitSpecialMode()
+            plugin_logger.info("自动关闭特殊模式：课间/活动持续180秒")
 
     def _update_current_icon_and_remaining(self):
         """更新当前活动的图标和剩余时间文本"""
@@ -380,7 +412,7 @@ class Plugin(CW2Plugin):
     def __init__(self, api):
         super().__init__(api)
         self._subjects_map = {}
-        self._subjects_name_map = {}  # 新增：科目ID到全名的映射
+        self._subjects_name_map = {}
         self.backend = None
         self.is_dark_theme = False
         self.engine = None
