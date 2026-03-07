@@ -15,7 +15,10 @@ Window {
     }
     color: "transparent"
 
-    // 窗口始终全屏且不透明
+    // 窗口可见性：特殊模式时全屏，正常模式时普通窗口
+    visibility: lessonsBackend.mode !== "normal" ? Window.FullScreen : Window.Windowed
+
+    // 窗口始终全屏且不透明（全屏模式下尺寸自动为屏幕大小，但保留绑定以防万一）
     x: 0
     y: 0
     width: Screen.width
@@ -26,34 +29,15 @@ Window {
         id: backgroundLayer
         anchors.fill: parent
         color: lessonsBackend.mode === "whiteboard" ? "white" : (lessonsBackend.mode === "blackboard" ? "black" : "transparent")
-        opacity: 0
+        opacity: lessonsBackend.mode === "normal" ? 0 : 1
         z: 0
 
         Behavior on color {
-            ColorAnimation { duration: 300; easing.type: Easing.OutCubic }
+            ColorAnimation { duration: 400; easing.type: Easing.OutCubic }
         }
         Behavior on opacity {
-            NumberAnimation { duration: 300; easing.type: Easing.OutCubic }
+            NumberAnimation { duration: 400; easing.type: Easing.OutCubic }
         }
-
-        // 当模式变化时，根据模式设置透明度
-        states: [
-            State {
-                name: "normal"
-                when: lessonsBackend.mode === "normal"
-                PropertyChanges { target: backgroundLayer; opacity: 0 }
-            },
-            State {
-                name: "whiteboard"
-                when: lessonsBackend.mode === "whiteboard"
-                PropertyChanges { target: backgroundLayer; opacity: 1 }
-            },
-            State {
-                name: "blackboard"
-                when: lessonsBackend.mode === "blackboard"
-                PropertyChanges { target: backgroundLayer; opacity: 1 }
-            }
-        ]
     }
 
     Loader {
@@ -71,9 +55,9 @@ Window {
 
         Behavior on x { NumberAnimation { duration: 400; easing.type: Easing.OutQuint } }
         Behavior on y { NumberAnimation { duration: 400; easing.type: Easing.OutQuint } }
-        Behavior on width { NumberAnimation { duration: 300; easing.type: Easing.OutQuint } }
-        Behavior on height { NumberAnimation { duration: 300; easing.type: Easing.OutQuint } }
-        Behavior on opacity { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
+        Behavior on width { NumberAnimation { duration: 400; easing.type: Easing.OutQuint } }
+        Behavior on height { NumberAnimation { duration: 400; easing.type: Easing.OutQuint } }
+        Behavior on opacity { NumberAnimation { duration: 400; easing.type: Easing.OutCubic } }
 
         onStatusChanged: {
             console.log("Loader status changed:", status)

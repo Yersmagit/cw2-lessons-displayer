@@ -15,10 +15,18 @@ Item {
         return lessonsBackend.isDarkTheme
     }
 
-    // 背景颜色（带透明度，仿 Widget.qml）
-    readonly property color bgColor: effectiveDarkTheme
-        ? Qt.rgba(30/255, 29/255, 34/255, 0.65)   // #1E1D22 半透明
-        : Qt.rgba(251/255, 250/255, 255/255, 0.7) // #FBFAFF 半透明
+    // 背景颜色：特殊模式纯色，正常模式半透明
+    readonly property color bgColor: {
+        if (lessonsBackend.mode === "whiteboard") {
+            return Qt.rgba(255/255, 255/255, 255/255, 1)   // 纯白
+        } else if (lessonsBackend.mode === "blackboard") {
+            return Qt.rgba(0/255, 0/255, 0/255, 1)         // 纯黑
+        } else {
+            return effectiveDarkTheme
+                ? Qt.rgba(30/255, 29/255, 34/255, 0.65)   // #1E1D22 半透明
+                : Qt.rgba(251/255, 250/255, 255/255, 0.7) // #FBFAFF 半透明
+        }
+    }
 
     // 边框基础颜色（用于渐变）
     readonly property color borderBaseColor: effectiveDarkTheme
@@ -35,7 +43,7 @@ Item {
         radius: root.radius
         color: bgColor
         Behavior on color {
-            ColorAnimation { duration: 300; easing.type: Easing.OutCubic }
+            ColorAnimation { duration: 400; easing.type: Easing.OutCubic }
         }
     }
 
@@ -235,7 +243,7 @@ Item {
                         // 使用 Behavior 为宽度添加动画
                         Behavior on width {
                             NumberAnimation {
-                                duration: 300
+                                duration: 400
                                 easing.type: Easing.OutCubic
                             }
                         }
@@ -321,7 +329,7 @@ Item {
                                 return effectiveDarkTheme ? "#ffffff" : "#000000"
                             }
                             Behavior on color {
-                                ColorAnimation { duration: 300; easing.type: Easing.OutCubic }
+                                ColorAnimation { duration: 400; easing.type: Easing.OutCubic }
                             }
                         }
 
@@ -352,7 +360,7 @@ Item {
                                 font.bold: true
                                 color: effectiveDarkTheme ? "#ffffff" : "#000000"
                                 Behavior on color {
-                                    ColorAnimation { duration: 300; easing.type: Easing.OutCubic }
+                                    ColorAnimation { duration: 400; easing.type: Easing.OutCubic }
                                 }
                             }
 
@@ -382,7 +390,7 @@ Item {
                                 verticalAlignment: Text.AlignVCenter
                                 height: parent.height
                                 Behavior on color {
-                                    ColorAnimation { duration: 300; easing.type: Easing.OutCubic }
+                                    ColorAnimation { duration: 400; easing.type: Easing.OutCubic }
                                 }
                                 // 当内容宽度变化时，更新父项目标宽度
                                 onContentWidthChanged: updateTargetWidth()

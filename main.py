@@ -4,6 +4,9 @@ Class Widgets 2.0 - 今日课程显示插件 (独立全屏窗口版)
 """
 
 import os
+import sys
+import ctypes
+from ctypes import wintypes
 import darkdetect
 from loguru import logger
 from PySide6.QtCore import QObject, QUrl, Slot, Property, Signal, QTimer
@@ -11,7 +14,6 @@ from PySide6.QtGui import QGuiApplication, QScreen, QRegion
 from PySide6.QtQml import QQmlApplicationEngine
 from ClassWidgets.SDK import CW2Plugin
 from PySide6.QtCore import Qt
-
 plugin_logger = logger.bind(plugin="lessons-displayer")
 
 # 默认宽度常量
@@ -196,10 +198,8 @@ class LessonsBackend(QObject):
 
     def _update_current_icon_and_remaining(self):
         """更新当前活动的图标和剩余时间文本"""
-        # 获取当前条目（可能为空）
         current_entry = self.plugin.api.runtime.current_entry
 
-        # 设置图标
         if current_entry:
             subject_id = current_entry.get("subjectId")
             if subject_id:
@@ -211,7 +211,6 @@ class LessonsBackend(QObject):
                                 self._current_icon = subj.icon
                                 break
                         else:
-                            # 有科目但没有图标，使用类型默认图标
                             e_type = current_entry.get("type", "")
                             if e_type == "class":
                                 self._current_icon = "ic_fluent_class_20_regular"
@@ -227,7 +226,6 @@ class LessonsBackend(QObject):
                     plugin_logger.debug(f"获取科目图标失败: {e}")
                     self._current_icon = "ic_fluent_question_20_regular"
             else:
-                # 无科目，根据类型使用默认图标
                 e_type = current_entry.get("type", "")
                 if e_type == "class":
                     self._current_icon = "ic_fluent_class_20_regular"
@@ -240,10 +238,8 @@ class LessonsBackend(QObject):
                 else:
                     self._current_icon = "ic_fluent_question_20_regular"
         else:
-            # 无当前活动（自由时间），使用 accessibility 图标
             self._current_icon = "ic_fluent_accessibility_20_regular"
 
-        # 计算剩余时间文本
         remaining = self.plugin.api.runtime.remaining_time
         if not remaining:
             self._current_remaining_text = ""
@@ -255,9 +251,9 @@ class LessonsBackend(QObject):
 
         if total_seconds < 60:
             secs = max(1, total_seconds)
-            if self._current_state == 1:  # 上课
+            if self._current_state == 1:
                 self._current_remaining_text = f"剩 {secs} 秒"
-            else:  # 课间
+            else:
                 self._current_remaining_text = f"{secs} 秒后上课"
         else:
             mins = round(total_seconds / 60)
@@ -436,6 +432,7 @@ class Plugin(CW2Plugin):
         self._width_timer = None
         self._scroll_timer = None
         self._configs = None
+        self._mask_enabled = True  # 新增：mask 更新开关
         plugin_logger.info("今日课程插件初始化完成")
 
     def _setup_logging(self):
@@ -700,6 +697,8 @@ class Plugin(CW2Plugin):
         if self.backend and self.backend.mode != "normal":
             self.window.setMask(QRegion())
             return
+        if not self._mask_enabled:
+            return
         try:
             if self.ui_loader:
                 x = int(self.ui_loader.property("x"))
@@ -718,13 +717,47 @@ class Plugin(CW2Plugin):
         except Exception as e:
             plugin_logger.error(f"更新 mask 失败: {e}")
 
+    def _enable_mask_and_update(self):
+        """延迟后恢复 mask 更新"""
+        self._mask_enabled = True
+        self._update_mask()
+
     def _on_mode_changed(self):
         mode = self.backend.mode
         if mode == "normal":
+            # 从特殊模式切换为正常模式
             self.window.setMask(QRegion())
-            self._update_mask()
+            self._mask_enabled = False
+            self.window.setFlag(Qt.WindowStaysOnTopHint, False)
+            # 如果是 Windows，移除系统级置顶
+            if sys.platform == 'win32':
+                try:
+                    hwnd = int(self.window.winId())
+                    HWND_NOTOPMOST = -2
+                    SWP_NOMOVE = 0x0002
+                    SWP_NOSIZE = 0x0001
+                    ctypes.windll.user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                                                    SWP_NOMOVE | SWP_NOSIZE)
+                except Exception as e:
+                    plugin_logger.debug(f"移除系统置顶失败: {e}")
+            # 延迟 400ms 后恢复 mask（等待背景淡出动画）
+            QTimer.singleShot(400, self._enable_mask_and_update)
         else:
+            # 进入特殊模式
             self.window.setMask(QRegion())
+            self._mask_enabled = True
+            self.window.setFlag(Qt.WindowStaysOnTopHint, True)
+            # 如果是 Windows，强制系统级置顶
+            if sys.platform == 'win32':
+                try:
+                    hwnd = int(self.window.winId())
+                    HWND_TOPMOST = -1
+                    SWP_NOMOVE = 0x0002
+                    SWP_NOSIZE = 0x0001
+                    ctypes.windll.user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                                                    SWP_NOMOVE | SWP_NOSIZE)
+                except Exception as e:
+                    plugin_logger.debug(f"强制置顶失败: {e}")
             self.window.raise_()
             self.window.activateWindow()
 
