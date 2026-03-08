@@ -6,14 +6,14 @@ Class Widgets 2.0 - 今日课程显示插件 (独立全屏窗口版)
 import os
 import sys
 import ctypes
-from ctypes import wintypes
 import darkdetect
 from loguru import logger
 from PySide6.QtCore import QObject, QUrl, Slot, Property, Signal, QTimer
-from PySide6.QtGui import QGuiApplication, QScreen, QRegion
+from PySide6.QtGui import QGuiApplication, QScreen, QRegion, QCursor
 from PySide6.QtQml import QQmlApplicationEngine
 from ClassWidgets.SDK import CW2Plugin
 from PySide6.QtCore import Qt
+
 plugin_logger = logger.bind(plugin="lessons-displayer")
 
 # 默认宽度常量
@@ -432,7 +432,15 @@ class Plugin(CW2Plugin):
         self._width_timer = None
         self._scroll_timer = None
         self._configs = None
-        self._mask_enabled = True  # 新增：mask 更新开关
+        self._mask_enabled = True
+
+        # 鼠标自动隐藏相关
+        self._cursor_timer = QTimer()
+        self._cursor_timer.timeout.connect(self._check_mouse_idle)
+        self._last_mouse_pos = None
+        self._idle_seconds = 0
+        self._cursor_hidden = False
+
         plugin_logger.info("今日课程插件初始化完成")
 
     def _setup_logging(self):
@@ -717,6 +725,23 @@ class Plugin(CW2Plugin):
         except Exception as e:
             plugin_logger.error(f"更新 mask 失败: {e}")
 
+    def _check_mouse_idle(self):
+        """检查鼠标是否空闲，用于特殊模式下自动隐藏光标"""
+        if not self.window or self.backend.mode == "normal":
+            return
+        pos = QCursor.pos()
+        if self._last_mouse_pos == pos:
+            self._idle_seconds += 0.5
+            if self._idle_seconds >= 4.0 and not self._cursor_hidden:
+                self.window.setCursor(Qt.BlankCursor)
+                self._cursor_hidden = True
+        else:
+            self._last_mouse_pos = pos
+            self._idle_seconds = 0
+            if self._cursor_hidden:
+                self.window.setCursor(Qt.ArrowCursor)
+                self._cursor_hidden = False
+
     def _enable_mask_and_update(self):
         """延迟后恢复 mask 更新"""
         self._mask_enabled = True
@@ -725,10 +750,14 @@ class Plugin(CW2Plugin):
     def _on_mode_changed(self):
         mode = self.backend.mode
         if mode == "normal":
-            # 从特殊模式切换为正常模式
+            # 从特殊模式切换为正常模式：清除 mask，禁止自动更新，取消置顶，停止鼠标检测
             self.window.setMask(QRegion())
             self._mask_enabled = False
             self.window.setFlag(Qt.WindowStaysOnTopHint, False)
+            if self._cursor_hidden:
+                self.window.setCursor(Qt.ArrowCursor)
+                self._cursor_hidden = False
+            self._cursor_timer.stop()
             # 如果是 Windows，移除系统级置顶
             if sys.platform == 'win32':
                 try:
@@ -737,16 +766,22 @@ class Plugin(CW2Plugin):
                     SWP_NOMOVE = 0x0002
                     SWP_NOSIZE = 0x0001
                     ctypes.windll.user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-                                                    SWP_NOMOVE | SWP_NOSIZE)
+                                                      SWP_NOMOVE | SWP_NOSIZE)
                 except Exception as e:
                     plugin_logger.debug(f"移除系统置顶失败: {e}")
-            # 延迟 400ms 后恢复 mask（等待背景淡出动画）
+            # 延迟 400ms 后重新允许 mask 并更新
             QTimer.singleShot(400, self._enable_mask_and_update)
         else:
-            # 进入特殊模式
+            # 进入特殊模式：清除 mask，允许 mask 更新（但模式判断会直接返回），置顶，启动鼠标检测
             self.window.setMask(QRegion())
             self._mask_enabled = True
             self.window.setFlag(Qt.WindowStaysOnTopHint, True)
+            # 启动鼠标检测
+            self._last_mouse_pos = QCursor.pos()
+            self._idle_seconds = 0
+            self._cursor_hidden = False
+            self.window.setCursor(Qt.ArrowCursor)
+            self._cursor_timer.start(500)
             # 如果是 Windows，强制系统级置顶
             if sys.platform == 'win32':
                 try:
@@ -755,13 +790,16 @@ class Plugin(CW2Plugin):
                     SWP_NOMOVE = 0x0002
                     SWP_NOSIZE = 0x0001
                     ctypes.windll.user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
-                                                    SWP_NOMOVE | SWP_NOSIZE)
+                                                      SWP_NOMOVE | SWP_NOSIZE)
                 except Exception as e:
                     plugin_logger.debug(f"强制置顶失败: {e}")
             self.window.raise_()
             self.window.activateWindow()
 
     def on_unload(self):
+        if self._cursor_timer:
+            self._cursor_timer.stop()
+            self._cursor_timer.deleteLater()
         if self._scroll_timer:
             self._scroll_timer.stop()
             self._scroll_timer.deleteLater()
