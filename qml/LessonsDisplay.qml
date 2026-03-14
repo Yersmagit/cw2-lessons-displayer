@@ -374,8 +374,8 @@ Item {
                                     anchors.centerIn: parent
                                     gradient: Gradient {
                                         GradientStop { position: 0.0; color: "transparent" }
-                                        GradientStop { position: 0.3; color: effectiveDarkTheme ? Qt.rgba(1,1,1,0.4) : Qt.rgba(0,0,0,0.4) }
-                                        GradientStop { position: 0.7; color: effectiveDarkTheme ? Qt.rgba(1,1,1,0.4) : Qt.rgba(0,0,0,0.4) }
+                                        GradientStop { position: 0.3; color: effectiveDarkTheme ? Qt.rgba(1,1,1,0.6) : Qt.rgba(0,0,0,0.4) }
+                                        GradientStop { position: 0.7; color: effectiveDarkTheme ? Qt.rgba(1,1,1,0.6) : Qt.rgba(0,0,0,0.4) }
                                         GradientStop { position: 1.0; color: "transparent" }
                                     }
                                 }
@@ -413,8 +413,8 @@ Item {
                             anchors.centerIn: parent
                             gradient: Gradient {
                                 GradientStop { position: 0.0; color: "transparent" }
-                                GradientStop { position: 0.4; color: effectiveDarkTheme ? Qt.rgba(1,1,1,0.5) : Qt.rgba(0,0,0,0.5) }
-                                GradientStop { position: 0.6; color: effectiveDarkTheme ? Qt.rgba(1,1,1,0.5) : Qt.rgba(0,0,0,0.5) }
+                                GradientStop { position: 0.4; color: effectiveDarkTheme ? Qt.rgba(1,1,1,0.7) : Qt.rgba(0,0,0,0.5) }
+                                GradientStop { position: 0.6; color: effectiveDarkTheme ? Qt.rgba(1,1,1,0.7) : Qt.rgba(0,0,0,0.5) }
                                 GradientStop { position: 1.0; color: "transparent" }
                             }
                         }
