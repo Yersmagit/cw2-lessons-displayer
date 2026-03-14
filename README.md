@@ -14,9 +14,9 @@
 
 > [!IMPORTANT]
 > 
-> [原插件](https://github.com/Yersmagit/cw-lessons-displayer) 功能复杂，一些功能正逐步迁移，详见下方 __[功能迁移 / Functions](#功能迁移--functions)__ 板块。
+> 按照计划，一些功能正逐步完善，详见下方 __[功能 / Functions](#功能--functions)__ 板块。
 
-## 介绍 / Introduction
+## 简介 / Introduction
 可以完全展示当日课程信息，完全杜绝抄课表。
 本插件
 适用于 [Class Widgets 2](https://github.com/rinlit-233-shiroko/class-widgets-2) 。
@@ -27,27 +27,66 @@ _在寻找适用于 Class Widgets 1 的插件？请前往 旧版 [Lessons Displa
 ![light](previews/light.png)
 ![dark](previews/dark.png)
 
-## 使用 / Usages
-### 如何安装 / How to Install
+
+## 功能 / Functions
+### 已有功能 / Existing Functions
+#### 基本功能 / Basic Functions
+- 软件运行时，自动显示当日课程信息。如图：
+  ![ex_default](previews/ex_default.png)
+
+- 课程信息根据当前状态自动 **高亮** 显示。
+
+  **上课** 时，**橙红色** 高亮显示正在上的课；**下课** 时，**绿色** 高亮显示下一节课。
+
+  下图为数学课上课时的样子：
+  ![ex_on_class](previews/ex_on_class.png)
+
+- 课程列表过长时，会 **自动** 将高亮课程滚动到胶囊形 UI 的中间偏左位置。如下图：
+  ![ex_overflow](previews/ex_overflow.png)
+
+  当然，你也可以 **手动滚动课程列表**。支持 拖拽滚动 和 鼠标滚轮滚动。
+
+  滚动条只在鼠标悬停或触控拖拽时显示。
+
+- 在自由时间超过 15 分钟的位置，会显示一个 **分割线** 来分隔课程。如下图：
+  ![ex_divider](previews/ex_divider.png)
+
+  *注：自由时间 指没有任何课程安排的时间段*
+
+#### 更多功能 / More Functions
+- 胶囊形 UI 右侧有 **白板模式**按钮 ![ex_light_bottom](previews/ex_light_bottom.png) 和 **熄屏模式**按钮 ![ex_dark_bottom](previews/ex_dark_bottom.png)。
+
+  单击相应按钮可以打开相应模式。
+
+- 白板模式或熄屏模式使用全屏纯色界面，只展示关键信息。有些类似于屏保。如下图：
+  ![ex_blackboard](previews/ex_blackboard.png)
+
+  白板模式或熄屏模式下，高亮的课程会以胶囊形 **展开**，以显示更多详细信息。如下图：
+  ![ex_lessons_in_blackboard](previews/ex_lessons_in_blackboard.png)
+
+- 白板模式或熄屏模式下，活动 **剩余时间** 会根据课程状态动态调整文本显示策略。
+
+  如在上课时，会显示 `剩 x 分钟`；下课时，显示 `x 分钟后上课`。如果剩余时间少于 1 分钟，还会显示 `剩 x 秒` 或 `x 秒后上课`。
+
+### 待开发功能 / Planned Functions
+
+以下列举了本插件的待开发功能。
+- [ ] 胶囊状 UI 跟随主程序的高度、字体、缩放、窗口标志和主题设置
+- [ ] 插件的自定义设置
+- [ ] 自动化展示明日课程
+
+
+## 安装 / Installation
+### 如何安装并启用 / How to Install and Enable
 1. 下载插件包
 
 2. 在 Class Widgets 2 -> "设置" -> "插件"中导入下载好的插件包
 
+3. 在 Class Widgets 2 -> "设置" -> "插件"中启用
 
-### 使用方法 / How to Use
-1. 在 Class Widgets 2 -> "设置" -> "插件"中启用
+4. 重启软件
 
-2. 重启软件
-
-3. 完成！
-
-## 功能迁移 / Functions
-旧版插件的功能需要逐步迁移到 CW2，以下列举了已经或尚未迁移的功能。
-- [x] 显示基本的胶囊状 UI 以显示课程列表
-- [x] 基本 UI 跟随软件行为实时调整位置和宽度
-- [ ] 熄屏模式和白板模式
-- [ ] 自动化打开/关闭特定模式
-- [ ] 自动化展示明日课程
+5. 完成！
 
 
 ## 致谢 / Acknowledgements
