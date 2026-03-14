@@ -46,7 +46,7 @@ commit_parsers = [
     { message = "^feat", group = "✨ 新亮点"},
     { message = "^fix", group = "🛠️ 修复的问题"},
     { message = "^refactor", group = "🔃 功能重构"},
-    { message = "^docs", group = "📄 文档更新"},
+    { message = "^doc", group = "📄 文档更新"},
     { message = "^style", group = "🏞️ 样式优化"},
     { message = "^pref", group = "🚝 体验优化"},
 ]
