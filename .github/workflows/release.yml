@@ -34,6 +34,9 @@ jobs:
         run: |
           pip install class-widgets-sdk
           pip install -e .
+
+      - name: Remove previews directory (exclude from package)
+        run: rm -rf previews/
       
       - name: Build .cwplugin package
         run: cw-plugin-pack
