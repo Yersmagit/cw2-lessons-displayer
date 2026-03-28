@@ -1,5 +1,5 @@
 <div align="center">
-<img src="icon.png" width="15%" alt="Lessons Displayer">
+<img src="icon.png" width="192px" alt="Lessons Displayer">
 <h1>Lessons Displayer</h1>
 
 <p>看看今天有什么课？</p>
@@ -99,5 +99,3 @@ _在寻找适用于 Class Widgets 1 的插件？请前往 旧版 [Lessons Displa
 本项目基于 MIT 协议开源，详情请参阅 [LICENSE](https://github.com/rinlit-233-shiroko/class-widgets-2-plugin-template/blob/main/LICENSE) 文件。
 
 The project is licensed under the MIT license. Please refer to the [LICENSE](https://github.com/rinlit-233-shiroko/class-widgets-2-plugin-template/blob/main/LICENSE) file for details.
-
-![test](icon.png)
