@@ -4,11 +4,11 @@
 
 <p>看看今天有什么课？</p>
 
-<!--[![当前版本](https://img.shields.io/github/v/release/Class-Widgets/cw2-lessons-displayer?style=for-the-badge&color=purple&label=%E5%BD%93%E5%89%8D%E7%89%88%E6%9C%AC)](https://github.com/Class-Widgets/cw2-lessons-displayer/releases/latest)--->
+<!--[![当前版本](https://img.shields.io/github/v/release/Yersmagit/cw2-lessons-displayer?style=for-the-badge&color=purple&label=%E5%BD%93%E5%89%8D%E7%89%88%E6%9C%AC)](https://github.com/Yersmagit/cw2-lessons-displayer/releases/latest)--->
 
-[![星标](https://img.shields.io/github/stars/Class-Widgets/cw2-lessons-displayer?style=for-the-badge&color=orange&label=%E6%98%9F%E6%A0%87)](https://github.com/Class-Widgets/cw2-lessons-displayer)
-[![开源许可](https://img.shields.io/badge/license-MIT-blue.svg?label=%E5%BC%80%E6%BA%90%E8%AE%B8%E5%8F%AF%E8%AF%81&style=for-the-badge)](https://github.com/Class-Widgets/cw2-lessons-displayer)
-[![下载量](https://img.shields.io/github/downloads/Class-Widgets/cw2-lessons-displayer/total.svg?label=%E4%B8%8B%E8%BD%BD%E9%87%8F&color=green&style=for-the-badge)](https://github.com/Class-Widgets/cw2-lessons-displayer)
+[![星标](https://img.shields.io/github/stars/Yersmagit/cw2-lessons-displayer?style=for-the-badge&color=orange&label=%E6%98%9F%E6%A0%87)](https://github.com/Yersmagit/cw2-lessons-displayer)
+[![开源许可](https://img.shields.io/badge/license-MIT-blue.svg?label=%E5%BC%80%E6%BA%90%E8%AE%B8%E5%8F%AF%E8%AF%81&style=for-the-badge)](https://github.com/Yersmagit/cw2-lessons-displayer)
+[![下载量](https://img.shields.io/github/downloads/Yersmagit/cw2-lessons-displayer/total.svg?label=%E4%B8%8B%E8%BD%BD%E9%87%8F&color=green&style=for-the-badge)](https://github.com/Yersmagit/cw2-lessons-displayer)
 
 </div>
 
