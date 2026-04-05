@@ -126,7 +126,6 @@ Item {
             width: calculateListViewWidth()
             contentWidth: childrenRect.width
 
-            // 模型改为 displayItems，包含课程和分隔符
             model: lessonsBackend.displayItems
 
             // 自动滚动相关属性
@@ -220,38 +219,33 @@ Item {
                 sourceComponent: {
                     if (modelData.type === "separator") {
                         return separatorComponent
+                    } else if (modelData.type === "placeholder") {
+                        return placeholderComponent
                     } else {
                         return lessonComponent
                     }
                 }
 
+                // 课程项组件
                 Component {
                     id: lessonComponent
                     Item {
                         id: lessonItem
                         property bool isHighlighted: modelData.id === lessonsBackend.currentLessonId || (lessonsBackend.currentState === 0 && modelData.id === lessonsBackend.nextLessonId)
                         property bool expanded: isHighlighted && lessonsBackend.mode !== "normal"
-                        // 折叠宽度固定为缩写宽度 + 10，不依赖模式
                         property real foldedWidth: lessonAbbr.contentWidth + 10
-                        // 展开宽度根据实际内容计算（仅在特殊模式下使用）
                         property real expandedWidth: 30 + 8 + lessonFullName.contentWidth + 22 + remainingText.implicitWidth + 20
                         property real targetWidth: foldedWidth
 
                         width: targetWidth
                         height: lessonsBackend.mode === "normal" ? 40 : 46
 
-                        // 使用 Behavior 为宽度添加动画
                         Behavior on width {
-                            NumberAnimation {
-                                duration: 400
-                                easing.type: Easing.OutCubic
-                            }
+                            NumberAnimation { duration: 400; easing.type: Easing.OutCubic }
                         }
 
-                        // 更新目标宽度
                         function updateTargetWidth() {
                             var newWidth = expanded ? expandedWidth : foldedWidth
-                            // 阈值设为0.1，确保微小变化也能触发动画
                             if (Math.abs(newWidth - targetWidth) > 0.1) {
                                 targetWidth = newWidth
                             }
@@ -310,7 +304,6 @@ Item {
                             }
                         }
 
-                        // 折叠时显示的缩写文本
                         Text {
                             id: lessonAbbr
                             visible: !expanded
@@ -333,9 +326,7 @@ Item {
                             }
                         }
 
-                        // 展开时显示的内容
                         Row {
-                            id: expandedRow
                             visible: expanded
                             anchors.left: parent.left
                             anchors.leftMargin: 8
@@ -392,7 +383,6 @@ Item {
                                 Behavior on color {
                                     ColorAnimation { duration: 400; easing.type: Easing.OutCubic }
                                 }
-                                // 当内容宽度变化时，更新父项目标宽度
                                 onContentWidthChanged: updateTargetWidth()
                                 onImplicitWidthChanged: updateTargetWidth()
                             }
@@ -416,6 +406,41 @@ Item {
                                 GradientStop { position: 0.4; color: effectiveDarkTheme ? Qt.rgba(1,1,1,0.7) : Qt.rgba(0,0,0,0.5) }
                                 GradientStop { position: 0.6; color: effectiveDarkTheme ? Qt.rgba(1,1,1,0.7) : Qt.rgba(0,0,0,0.5) }
                                 GradientStop { position: 1.0; color: "transparent" }
+                            }
+                        }
+                    }
+                }
+
+                // 占位提示组件
+                Component {
+                    id: placeholderComponent
+                    Item {
+                        property real textWidth: placeholderText.contentWidth
+                        property real iconWidth: 24
+                        width: iconWidth + 8 + textWidth + 20
+                        height: lessonsBackend.mode === "normal" ? 40 : 46
+
+                        Row {
+                            anchors.centerIn: parent
+                            spacing: 8
+
+                            Icon {
+                                width: 24
+                                height: parent.height
+                                size: 24
+                                icon: modelData.icon
+                                color: effectiveDarkTheme ? "#ffffff" : "#000000"
+                            }
+
+                            Text {
+                                id: placeholderText
+                                text: modelData.text
+                                font.pixelSize: 16
+                                font.bold: true
+                                color: effectiveDarkTheme ? "#ffffff" : "#000000"
+                                Behavior on color {
+                                    ColorAnimation { duration: 400; easing.type: Easing.OutCubic }
+                                }
                             }
                         }
                     }
@@ -518,7 +543,7 @@ Item {
             icon.name: {
                 if (lessonsBackend.mode === "whiteboard") return "ic_fluent_weather_moon_20_regular"
                 if (lessonsBackend.mode === "blackboard") return "ic_fluent_weather_sunny_20_regular"
-                return "ic_fluent_weather_sunny_20_regular" // 正常模式为白板模式
+                return "ic_fluent_weather_sunny_20_regular"
             }
             anchors.verticalCenter: parent.verticalCenter
             highlighted: effectiveDarkTheme
@@ -543,7 +568,7 @@ Item {
             implicitHeight: 30
             icon.name: {
                 if (lessonsBackend.mode !== "normal") return "ic_fluent_arrow_exit_20_regular"
-                return "ic_fluent_weather_moon_20_regular" // 正常模式为熄屏模式
+                return "ic_fluent_weather_moon_20_regular"
             }
             anchors.verticalCenter: parent.verticalCenter
             highlighted: effectiveDarkTheme
@@ -560,7 +585,7 @@ Item {
         Item { width: 13; height: parent.height }
     }
 
-    // 计算列表视图宽度（限制为内容宽度或可用宽度的较小值）
+    // 计算列表视图宽度
     function calculateListViewWidth() {
         var fixedWidth = 13 + 30 + 16 + 16 + 30 + 12 + 30 + 13
         var availableWidth = root.width - fixedWidth
@@ -568,7 +593,7 @@ Item {
         return Math.min(contentWidth, availableWidth)
     }
 
-    // 计算空白宽度（左右相等）
+    // 计算空白宽度
     function calculateSpacerWidth() {
         var fixedWidth = 13 + 30 + 16 + 16 + 30 + 12 + 30 + 13
         var availableWidth = root.width - fixedWidth
