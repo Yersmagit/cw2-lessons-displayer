@@ -103,6 +103,7 @@ class LessonsBackend(QObject):
             plugin_logger.info("没有课程需要显示，添加占位提示")
             return
 
+        # 以下为原有代码，保持不变
         self.plugin._update_subjects_map()
 
         all_entries = entries
@@ -161,7 +162,7 @@ class LessonsBackend(QObject):
                 "icon": "ic_fluent_text_bullet_list_dismiss_20_regular",
                 "text": "今天还没有课程 ~"
             })
-            
+
         self._display_items = display_items
         self._lessons = lessons
 
@@ -298,6 +299,12 @@ class LessonsBackend(QObject):
             offset_y = prefs.widgets_offset_y
             hide = interactions.hide.state
 
+            # 获取缩放因子和迷你模式，计算小组件实际高度
+            scale_factor = prefs.scale_factor if hasattr(prefs, 'scale_factor') else 1.0
+            mini_mode = prefs.mini_mode if hasattr(prefs, 'mini_mode') else False
+            base_height = 56 if mini_mode else 100
+            widgets_height = base_height * scale_factor
+
             screen = QGuiApplication.primaryScreen().availableGeometry()
             screen_width = screen.width()
             screen_height = screen.height()
@@ -310,19 +317,21 @@ class LessonsBackend(QObject):
             else:
                 vert, horz = parts[0].lower(), parts[1].lower()
 
+                # 计算 y
                 if vert == "top":
                     if hide and horz == "center":
                         y = -UI_HEIGHT + 24
                     else:
-                        y = 108 + offset_y
+                        y = 8 + widgets_height + offset_y
                 elif vert == "bottom":
                     if hide and horz == "center":
                         y = screen_height - 24
                     else:
-                        y = screen_height - UI_HEIGHT - offset_y - 60
+                        y = screen_height - UI_HEIGHT - offset_y - widgets_height + 40
                 else:
                     y = 132
 
+                # 计算 x
                 if horz == "left":
                     if hide:
                         x = -ui_width + 24
