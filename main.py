@@ -110,11 +110,15 @@ class LessonsBackend(QObject):
                 return False
             return True
 
+        # 预计算是否显示
         show_flags = [should_show(e) for e in all_entries]
 
         display_items = []
         lessons = []
         filtered_ids = set()
+
+        # 上一个被显示条目的结束时间（分钟）
+        last_displayed_end = None
 
         for i, entry in enumerate(all_entries):
             if not show_flags[i]:
@@ -127,6 +131,14 @@ class LessonsBackend(QObject):
             full_name = self._get_entry_full_name(entry)
             is_class = (entry_type == "class")
 
+            # 计算与上一个显示条目的时间间隔
+            if last_displayed_end is not None:
+                current_start = _time_to_minutes(entry.get("startTime"))
+                gap = current_start - last_displayed_end
+                if gap >= 15:
+                    display_items.append({"type": "separator"})
+
+            # 添加当前显示条目
             lesson_item = {
                 "type": "lesson",
                 "id": entry_id,
@@ -138,14 +150,8 @@ class LessonsBackend(QObject):
             lessons.append(lesson_item)
             filtered_ids.add(entry_id)
 
-            if i < n - 1:
-                next_entry = all_entries[i + 1]
-                if show_flags[i + 1]:
-                    current_end = _time_to_minutes(entry.get("endTime"))
-                    next_start = _time_to_minutes(next_entry.get("startTime"))
-                    gap = next_start - current_end
-                    if gap >= 15:
-                        display_items.append({"type": "separator"})
+            # 更新上一个显示条目的结束时间
+            last_displayed_end = _time_to_minutes(entry.get("endTime"))
 
         self._display_items = display_items
         self._lessons = lessons
