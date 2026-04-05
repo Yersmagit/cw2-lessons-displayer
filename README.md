@@ -54,7 +54,7 @@ _在寻找适用于 Class Widgets 1 的插件？请前往 旧版 [Lessons Displa
   *注：自由时间 指没有任何课程安排的时间段*
 
 #### 更多功能 / More Functions
-- 胶囊形 UI 右侧有 **白板模式**按钮 ![ex_light_bottom](previews/ex_light_bottom.png) 和 **熄屏模式**按钮 ![ex_dark_bottom](previews/ex_dark_bottom.png)。
+- <span style="display: inline-flex; align-items: center; white-space: nowrap; gap: 4px;"><span>胶囊形 UI 右侧有 <strong>白板模式</strong> 按钮</span> <img src="previews/ex_light_bottom.png" alt="ex_light_bottom" style="width:30px; height:30px;"> <span>和 <strong>熄屏模式</strong> 按钮</span> <img src="previews/ex_dark_bottom.png" alt="ex_dark_bottom" style="width:30px; height:30px;"></span>
 
   单击相应按钮可以打开相应模式。
 
