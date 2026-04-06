@@ -38,7 +38,8 @@ class LessonsBackend(QObject):
     opacityChanged = Signal()
     scrollRequested = Signal(int)
     modeChanged = Signal()
-    fontChanged = Signal()  # 字体配置变化信号
+    fontChanged = Signal()  
+    bgOpacityChanged = Signal()
 
     def __init__(self, plugin):
         super().__init__()
@@ -68,10 +69,25 @@ class LessonsBackend(QObject):
         # 初始化字体
         self._update_font()
 
+        # 初始化背景不透明度
+        self._bg_opacity = 1.0
+        self._update_bg_opacity()
+
     def set_ui_opacity(self, opacity):
         if opacity != self._opacity:
             self._opacity = opacity
             self.opacityChanged.emit()
+
+    def _update_bg_opacity(self):
+        try:
+            configs = self.plugin._configs
+            if configs:
+                self._bg_opacity = getattr(configs.preferences, 'opacity', 1.0)
+            else:
+                self._bg_opacity = 1.0
+        except Exception:
+            self._bg_opacity = 1.0
+        self.bgOpacityChanged.emit()
 
     def _update_font(self):
         """从配置更新字体和字重"""
@@ -457,6 +473,10 @@ class LessonsBackend(QObject):
     @Property(int, notify=fontChanged)
     def fontWeight(self):
         return self._font_weight
+    
+    @Property(float, notify=bgOpacityChanged)
+    def bgOpacity(self):
+        return self._bg_opacity
 
 
 class Plugin(CW2Plugin):
@@ -567,10 +587,11 @@ class Plugin(CW2Plugin):
         self._start_scroll_timer()
 
     def _on_config_changed(self):
-        plugin_logger.debug("配置变化，更新位置和字体")
+        plugin_logger.debug("配置变化，更新位置、背景不透明度和字体")
         if self.backend:
             self.backend.update_position()
             self.backend._update_font()
+            self.backend._update_bg_opacity()
 
     def _start_layer_sync(self):
         self._layer_timer = QTimer()

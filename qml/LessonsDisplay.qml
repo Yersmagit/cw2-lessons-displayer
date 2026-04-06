@@ -15,16 +15,18 @@ Item {
         return lessonsBackend.isDarkTheme
     }
 
-    // 背景颜色：特殊模式纯色，正常模式半透明
+    // 背景颜色：特殊模式纯色，正常模式半透明，根据配置调整不透明度
     readonly property color bgColor: {
         if (lessonsBackend.mode === "whiteboard") {
-            return Qt.rgba(255/255, 255/255, 255/255, 1)   // 纯白
+            return Qt.rgba(255/255, 255/255, 255/255, 1)
         } else if (lessonsBackend.mode === "blackboard") {
-            return Qt.rgba(0/255, 0/255, 0/255, 1)         // 纯黑
+            return Qt.rgba(0/255, 0/255, 0/255, 1)
         } else {
-            return effectiveDarkTheme
-                ? Qt.rgba(30/255, 29/255, 34/255, 0.65)   // #1E1D22 半透明
-                : Qt.rgba(251/255, 250/255, 255/255, 0.7) // #FBFAFF 半透明
+            if (effectiveDarkTheme) {
+                return Qt.rgba(30/255, 29/255, 34/255, 0.65 * lessonsBackend.bgOpacity)
+            } else {
+                return Qt.rgba(251/255, 250/255, 255/255, 0.7 * lessonsBackend.bgOpacity)
+            }
         }
     }
 
@@ -52,6 +54,10 @@ Item {
         anchors.fill: parent
         z: 1
         visible: lessonsBackend.mode === "normal"
+        opacity: 0.85 * lessonsBackend.bgOpacity
+        Behavior on opacity {
+            NumberAnimation { duration: 400; easing.type: Easing.OutCubic }
+        }
 
         Rectangle {
             id: borderRect
@@ -81,8 +87,6 @@ Item {
                 border.width: borderWidth
             }
         }
-
-        opacity: 0.85
     }
 
     // 内容容器（手动布局）
