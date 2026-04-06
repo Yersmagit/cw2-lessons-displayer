@@ -310,7 +310,8 @@ Item {
                             anchors.centerIn: parent
                             text: modelData.abbr
                             font.pixelSize: 28
-                            font.bold: true
+                            font.family: lessonsBackend.fontFamily
+                            font.weight: lessonsBackend.fontWeight
                             color: {
                                 if (isHighlighted) {
                                     if (lessonsBackend.mode === "normal") {
@@ -348,7 +349,8 @@ Item {
                                 id: lessonFullName
                                 text: modelData.fullName
                                 font.pixelSize: 27
-                                font.bold: true
+                                font.family: lessonsBackend.fontFamily
+                                font.weight: lessonsBackend.fontWeight
                                 color: effectiveDarkTheme ? "#ffffff" : "#000000"
                                 Behavior on color {
                                     ColorAnimation { duration: 400; easing.type: Easing.OutCubic }
@@ -376,7 +378,8 @@ Item {
                                 id: remainingText
                                 text: lessonsBackend.currentRemainingText
                                 font.pixelSize: 16
-                                font.bold: true
+                                font.family: lessonsBackend.fontFamily
+                                font.weight: lessonsBackend.fontWeight
                                 color: effectiveDarkTheme ? "#ffffff" : "#000000"
                                 verticalAlignment: Text.AlignVCenter
                                 height: parent.height
@@ -436,7 +439,8 @@ Item {
                                 id: placeholderText
                                 text: modelData.text
                                 font.pixelSize: 16
-                                font.bold: true
+                                font.family: lessonsBackend.fontFamily
+                                font.weight: lessonsBackend.fontWeight
                                 color: effectiveDarkTheme ? "#ffffff" : "#000000"
                                 Behavior on color {
                                     ColorAnimation { duration: 400; easing.type: Easing.OutCubic }

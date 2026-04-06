@@ -38,6 +38,7 @@ class LessonsBackend(QObject):
     opacityChanged = Signal()
     scrollRequested = Signal(int)
     modeChanged = Signal()
+    fontChanged = Signal()  # 字体配置变化信号
 
     def __init__(self, plugin):
         super().__init__()
@@ -55,6 +56,8 @@ class LessonsBackend(QObject):
         self._mode = "normal"
         self._current_icon = "ic_fluent_question_20_regular"
         self._current_remaining_text = ""
+        self._font_family = ""
+        self._font_weight = 400
 
         # 自动关闭特殊模式相关
         self._auto_close_timer = QTimer()
@@ -62,10 +65,30 @@ class LessonsBackend(QObject):
         self._auto_close_timer.setSingleShot(True)
         self._in_auto_close_status = False
 
+        # 初始化字体
+        self._update_font()
+
     def set_ui_opacity(self, opacity):
         if opacity != self._opacity:
             self._opacity = opacity
             self.opacityChanged.emit()
+
+    def _update_font(self):
+        """从配置更新字体和字重"""
+        try:
+            configs = self.plugin._configs
+            if configs:
+                prefs = configs.preferences
+                self._font_family = getattr(prefs, 'font', 'Microsoft YaHei')
+                self._font_weight = getattr(prefs, 'font_weight', 600)
+            else:
+                self._font_family = "Microsoft YaHei"
+                self._font_weight = 600
+        except Exception as e:
+            plugin_logger.debug(f"读取字体配置失败: {e}，使用默认值")
+            self._font_family = "Microsoft YaHei"
+            self._font_weight = 600
+        self.fontChanged.emit()
 
     def _get_entry_full_name(self, entry):
         """获取条目的全称"""
@@ -90,7 +113,6 @@ class LessonsBackend(QObject):
     def update_lessons(self):
         entries = self.plugin.api.runtime.current_day_entries
         if not entries:
-            # 没有条目时，清空原有数据并添加占位提示
             self._lessons = []
             self._display_items = [{
                 "type": "placeholder",
@@ -103,7 +125,6 @@ class LessonsBackend(QObject):
             plugin_logger.info("没有课程需要显示，添加占位提示")
             return
 
-        # 以下为原有代码，保持不变
         self.plugin._update_subjects_map()
 
         all_entries = entries
@@ -155,7 +176,6 @@ class LessonsBackend(QObject):
 
             last_displayed_end = _time_to_minutes(entry.get("endTime"))
 
-        # 如果没有任何显示项，添加占位提示
         if not display_items:
             display_items.append({
                 "type": "placeholder",
@@ -166,14 +186,12 @@ class LessonsBackend(QObject):
         self._display_items = display_items
         self._lessons = lessons
 
-        # 更新当前课程ID（只考虑课程）
         current = self.plugin.api.runtime.current_entry
         if current and current.get("type") == "class":
             self._current_lesson_id = current.get("id", "")
         else:
             self._current_lesson_id = ""
 
-        # 更新下一节课ID
         next_lesson_id = ""
         next_entries = self.plugin.api.runtime.next_entries
         if next_entries:
@@ -186,9 +204,7 @@ class LessonsBackend(QObject):
         self._current_state = 1 if self.plugin.api.runtime.current_status == "class" else 0
         self.lessonsUpdated.emit()
 
-        # 更新当前图标和剩余时间文本
         self._update_current_icon_and_remaining()
-        # 检查自动关闭条件
         self._check_auto_close()
 
     def _check_auto_close(self):
@@ -197,12 +213,10 @@ class LessonsBackend(QObject):
         is_auto_close_status = current_status in ("break", "activity", "free")
         if is_auto_close_status:
             if not self._in_auto_close_status:
-                # 刚进入 break/activity，启动计时器
                 self._in_auto_close_status = True
-                self._auto_close_timer.start(180000)  # 180秒
+                self._auto_close_timer.start(180000)
         else:
             if self._in_auto_close_status:
-                # 离开 break/activity，停止计时器
                 self._in_auto_close_status = False
                 self._auto_close_timer.stop()
 
@@ -299,7 +313,6 @@ class LessonsBackend(QObject):
             offset_y = prefs.widgets_offset_y
             hide = interactions.hide.state
 
-            # 获取缩放因子和迷你模式，计算小组件实际高度
             scale_factor = prefs.scale_factor if hasattr(prefs, 'scale_factor') else 1.0
             mini_mode = prefs.mini_mode if hasattr(prefs, 'mini_mode') else False
             base_height = 56 if mini_mode else 100
@@ -317,7 +330,6 @@ class LessonsBackend(QObject):
             else:
                 vert, horz = parts[0].lower(), parts[1].lower()
 
-                # 计算 y
                 if vert == "top":
                     if hide and horz == "center":
                         y = -UI_HEIGHT + 24
@@ -331,7 +343,6 @@ class LessonsBackend(QObject):
                 else:
                     y = 132
 
-                # 计算 x
                 if horz == "left":
                     if hide:
                         x = -ui_width + 24
@@ -439,6 +450,14 @@ class LessonsBackend(QObject):
     def currentRemainingText(self):
         return self._current_remaining_text
 
+    @Property(str, notify=fontChanged)
+    def fontFamily(self):
+        return self._font_family
+
+    @Property(int, notify=fontChanged)
+    def fontWeight(self):
+        return self._font_weight
+
 
 class Plugin(CW2Plugin):
     def __init__(self, api):
@@ -458,7 +477,6 @@ class Plugin(CW2Plugin):
         self._configs = None
         self._mask_enabled = True
 
-        # 鼠标自动隐藏相关
         self._cursor_timer = QTimer()
         self._cursor_timer.timeout.connect(self._check_mouse_idle)
         self._last_mouse_pos = None
@@ -549,9 +567,10 @@ class Plugin(CW2Plugin):
         self._start_scroll_timer()
 
     def _on_config_changed(self):
-        plugin_logger.debug("配置变化，更新位置")
+        plugin_logger.debug("配置变化，更新位置和字体")
         if self.backend:
             self.backend.update_position()
+            self.backend._update_font()
 
     def _start_layer_sync(self):
         self._layer_timer = QTimer()
@@ -774,7 +793,6 @@ class Plugin(CW2Plugin):
     def _on_mode_changed(self):
         mode = self.backend.mode
         if mode == "normal":
-            # 从特殊模式切换为正常模式：清除 mask，禁止自动更新，取消置顶，停止鼠标检测
             self.window.setMask(QRegion())
             self._mask_enabled = False
             self.window.setFlag(Qt.WindowStaysOnTopHint, False)
@@ -782,7 +800,6 @@ class Plugin(CW2Plugin):
                 self.window.setCursor(Qt.ArrowCursor)
                 self._cursor_hidden = False
             self._cursor_timer.stop()
-            # 如果是 Windows，移除系统级置顶
             if sys.platform == 'win32':
                 try:
                     hwnd = int(self.window.winId())
@@ -793,20 +810,16 @@ class Plugin(CW2Plugin):
                                                       SWP_NOMOVE | SWP_NOSIZE)
                 except Exception as e:
                     plugin_logger.debug(f"移除系统置顶失败: {e}")
-            # 延迟 400ms 后重新允许 mask 并更新
             QTimer.singleShot(400, self._enable_mask_and_update)
         else:
-            # 进入特殊模式：清除 mask，允许 mask 更新（但模式判断会直接返回），置顶，启动鼠标检测
             self.window.setMask(QRegion())
             self._mask_enabled = True
             self.window.setFlag(Qt.WindowStaysOnTopHint, True)
-            # 启动鼠标检测
             self._last_mouse_pos = QCursor.pos()
             self._idle_seconds = 0
             self._cursor_hidden = False
             self.window.setCursor(Qt.ArrowCursor)
             self._cursor_timer.start(500)
-            # 如果是 Windows，强制系统级置顶
             if sys.platform == 'win32':
                 try:
                     hwnd = int(self.window.winId())
