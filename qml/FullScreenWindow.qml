@@ -49,7 +49,7 @@ Window {
         x: lessonsBackend.mode === "normal" ? lessonsBackend.uiX : 4
         y: lessonsBackend.mode === "normal" ? lessonsBackend.uiY : 4
         width: lessonsBackend.mode === "normal" ? lessonsBackend.uiWidth : parent.width - 8
-        height: 54
+        height: 54 * lessonsBackend.scaleFactor
         opacity: lessonsBackend.uiOpacity  // 透明度绑定后端属性，实现淡入淡出
         z: 1
 

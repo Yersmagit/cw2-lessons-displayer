@@ -40,6 +40,7 @@ class LessonsBackend(QObject):
     modeChanged = Signal()
     fontChanged = Signal()  
     bgOpacityChanged = Signal()
+    scaleFactorChanged = Signal()
 
     def __init__(self, plugin):
         super().__init__()
@@ -71,7 +72,12 @@ class LessonsBackend(QObject):
 
         # 初始化背景不透明度
         self._bg_opacity = 1.0
-        self._update_bg_opacity()
+        self._update_bg_opacity
+        
+        # 初始化缩放因子
+        self._scale_factor = 1.0
+        self._update_scale_factor()
+
 
     def set_ui_opacity(self, opacity):
         if opacity != self._opacity:
@@ -88,6 +94,17 @@ class LessonsBackend(QObject):
         except Exception:
             self._bg_opacity = 1.0
         self.bgOpacityChanged.emit()
+
+    def _update_scale_factor(self):
+        try:
+            configs = self.plugin._configs
+            if configs:
+                self._scale_factor = getattr(configs.preferences, 'scale_factor', 1.0)
+            else:
+                self._scale_factor = 1.0
+        except Exception:
+            self._scale_factor = 1.0
+        self.scaleFactorChanged.emit()
 
     def _update_font(self):
         """从配置更新字体和字重"""
@@ -478,6 +495,10 @@ class LessonsBackend(QObject):
     def bgOpacity(self):
         return self._bg_opacity
 
+    @Property(float, notify=scaleFactorChanged)
+    def scaleFactor(self):
+        return self._scale_factor
+
 
 class Plugin(CW2Plugin):
     def __init__(self, api):
@@ -592,6 +613,7 @@ class Plugin(CW2Plugin):
             self.backend.update_position()
             self.backend._update_font()
             self.backend._update_bg_opacity()
+            self.backend._update_scale_factor()
 
     def _start_layer_sync(self):
         self._layer_timer = QTimer()

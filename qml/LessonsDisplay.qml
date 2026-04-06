@@ -6,7 +6,7 @@ import RinUI
 
 Item {
     id: root
-    height: 54
+    height: 54 * lessonsBackend.scaleFactor
 
     // 根据模式计算实际暗色主题
     readonly property bool effectiveDarkTheme: {
@@ -15,12 +15,12 @@ Item {
         return lessonsBackend.isDarkTheme
     }
 
-    // 背景颜色：特殊模式纯色，正常模式半透明，根据配置调整不透明度
+    // 背景颜色：特殊模式纯色，正常模式半透明（透明度已乘系数）
     readonly property color bgColor: {
         if (lessonsBackend.mode === "whiteboard") {
-            return Qt.rgba(255/255, 255/255, 255/255, 1)
+            return Qt.rgba(255/255, 255/255, 255/255, 1)   // 纯白
         } else if (lessonsBackend.mode === "blackboard") {
-            return Qt.rgba(0/255, 0/255, 0/255, 1)
+            return Qt.rgba(0/255, 0/255, 0/255, 1)         // 纯黑
         } else {
             if (effectiveDarkTheme) {
                 return Qt.rgba(30/255, 29/255, 34/255, 0.65 * lessonsBackend.bgOpacity)
@@ -35,8 +35,8 @@ Item {
         ? Qt.rgba(255/255, 255/255, 255/255, 0.4)
         : Qt.rgba(255/255, 255/255, 255/255, 1)
 
-    readonly property real borderWidth: 1.5
-    readonly property real radius: 27
+    readonly property real borderWidth: 1.5 * lessonsBackend.scaleFactor
+    readonly property real radius: 27 * lessonsBackend.scaleFactor
 
     // 背景矩形（纯色，无边框）—— 添加颜色动画
     Rectangle {
@@ -96,21 +96,23 @@ Item {
         spacing: 0
 
         // 左侧固定边距
-        Item { width: 13; height: parent.height }
+        Item { width: 13 * lessonsBackend.scaleFactor; height: parent.height }
 
         // 换课按钮（禁用）
         RoundButton {
             id: switchButton
             enabled: false
-            implicitWidth: 30
-            implicitHeight: 30
+            implicitWidth: 30 * lessonsBackend.scaleFactor
+            implicitHeight: 30 * lessonsBackend.scaleFactor
             icon.name: "ic_fluent_arrow_swap_20_regular"
+            icon.width: 18 * lessonsBackend.scaleFactor
+            icon.height: 18 * lessonsBackend.scaleFactor
             anchors.verticalCenter: parent.verticalCenter
             highlighted: effectiveDarkTheme
             primaryColor: effectiveDarkTheme ? "#444" : undefined
         }
 
-        Item { width: 16; height: parent.height }
+        Item { width: 16 * lessonsBackend.scaleFactor; height: parent.height }
 
         // 左侧弹性空白
         Item {
@@ -123,13 +125,14 @@ Item {
         ListView {
             id: lessonsListView
             orientation: ListView.Horizontal
-            spacing: 5
+            spacing: 5 * lessonsBackend.scaleFactor
             clip: true
-            height: lessonsBackend.mode === "normal" ? 40 : 46
+            height: (lessonsBackend.mode === "normal" ? 40 : 46) * lessonsBackend.scaleFactor
             anchors.verticalCenter: parent.verticalCenter
             width: calculateListViewWidth()
             contentWidth: childrenRect.width
 
+            // 模型改为 displayItems，包含课程和分隔符
             model: lessonsBackend.displayItems
 
             // 自动滚动相关属性
@@ -237,19 +240,27 @@ Item {
                         id: lessonItem
                         property bool isHighlighted: modelData.id === lessonsBackend.currentLessonId || (lessonsBackend.currentState === 0 && modelData.id === lessonsBackend.nextLessonId)
                         property bool expanded: isHighlighted && lessonsBackend.mode !== "normal"
-                        property real foldedWidth: lessonAbbr.contentWidth + 10
-                        property real expandedWidth: 30 + 8 + lessonFullName.contentWidth + 22 + remainingText.implicitWidth + 20
+                        // 折叠宽度固定为缩写宽度 + 10，不依赖模式
+                        property real foldedWidth: lessonAbbr.contentWidth + 10 * lessonsBackend.scaleFactor
+                        // 展开宽度根据实际内容计算（仅在特殊模式下使用）
+                        property real expandedWidth: 30 * lessonsBackend.scaleFactor + 8 * lessonsBackend.scaleFactor + lessonFullName.contentWidth + 22 * lessonsBackend.scaleFactor + remainingText.implicitWidth + 20 * lessonsBackend.scaleFactor
                         property real targetWidth: foldedWidth
 
                         width: targetWidth
-                        height: lessonsBackend.mode === "normal" ? 40 : 46
+                        height: (lessonsBackend.mode === "normal" ? 40 : 46) * lessonsBackend.scaleFactor
 
+                        // 使用 Behavior 为宽度添加动画
                         Behavior on width {
-                            NumberAnimation { duration: 400; easing.type: Easing.OutCubic }
+                            NumberAnimation {
+                                duration: 400
+                                easing.type: Easing.OutCubic
+                            }
                         }
 
+                        // 更新目标宽度
                         function updateTargetWidth() {
                             var newWidth = expanded ? expandedWidth : foldedWidth
+                            // 阈值设为0.1，确保微小变化也能触发动画
                             if (Math.abs(newWidth - targetWidth) > 0.1) {
                                 targetWidth = newWidth
                             }
@@ -281,7 +292,7 @@ Item {
                             y: 0
                             width: parent.width
                             height: parent.height
-                            radius: lessonsBackend.mode === "normal" ? 20 : 23
+                            radius: (lessonsBackend.mode === "normal" ? 20 : 23) * lessonsBackend.scaleFactor
                             color: {
                                 if (isHighlighted) {
                                     if (lessonsBackend.mode === "normal") {
@@ -294,7 +305,7 @@ Item {
                             }
                             border.width: {
                                 if (isHighlighted && lessonsBackend.mode !== "normal") {
-                                    return 2
+                                    return 2 * lessonsBackend.scaleFactor
                                 }
                                 return 0
                             }
@@ -308,12 +319,13 @@ Item {
                             }
                         }
 
+                        // 折叠时显示的缩写文本
                         Text {
                             id: lessonAbbr
                             visible: !expanded
                             anchors.centerIn: parent
                             text: modelData.abbr
-                            font.pixelSize: 28
+                            font.pixelSize: 28 * lessonsBackend.scaleFactor
                             font.family: lessonsBackend.fontFamily
                             font.weight: lessonsBackend.fontWeight
                             color: {
@@ -331,31 +343,33 @@ Item {
                             }
                         }
 
+                        // 展开时显示的内容
                         Row {
                             visible: expanded
                             anchors.left: parent.left
-                            anchors.leftMargin: 8
+                            anchors.leftMargin: 8 * lessonsBackend.scaleFactor
                             anchors.verticalCenter: parent.verticalCenter
                             spacing: 0
 
                             Icon {
                                 id: iconItem
-                                width: 30
+                                width: 30 * lessonsBackend.scaleFactor
                                 height: parent.height
-                                size: 30
+                                size: 30 * lessonsBackend.scaleFactor
                                 icon: lessonsBackend.currentIcon
                                 color: effectiveDarkTheme ? "#ffffff" : "#000000"
                             }
 
-                            Item { width: 8; height: 1 }
+                            Item { width: 8 * lessonsBackend.scaleFactor; height: 1 }
 
                             Text {
                                 id: lessonFullName
                                 text: modelData.fullName
-                                font.pixelSize: 27
+                                font.pixelSize: 27 * lessonsBackend.scaleFactor
                                 font.family: lessonsBackend.fontFamily
                                 font.weight: lessonsBackend.fontWeight
                                 color: effectiveDarkTheme ? "#ffffff" : "#000000"
+                                anchors.verticalCenter: parent.verticalCenter
                                 Behavior on color {
                                     ColorAnimation { duration: 400; easing.type: Easing.OutCubic }
                                 }
@@ -363,11 +377,11 @@ Item {
 
                             Item {
                                 id: separatorContainer
-                                width: 22
+                                width: 22 * lessonsBackend.scaleFactor
                                 height: parent.height
                                 Rectangle {
-                                    width: 2
-                                    height: 28
+                                    width: 2 * lessonsBackend.scaleFactor
+                                    height: 28 * lessonsBackend.scaleFactor
                                     anchors.centerIn: parent
                                     gradient: Gradient {
                                         GradientStop { position: 0.0; color: "transparent" }
@@ -381,7 +395,7 @@ Item {
                             Text {
                                 id: remainingText
                                 text: lessonsBackend.currentRemainingText
-                                font.pixelSize: 16
+                                font.pixelSize: 16 * lessonsBackend.scaleFactor
                                 font.family: lessonsBackend.fontFamily
                                 font.weight: lessonsBackend.fontWeight
                                 color: effectiveDarkTheme ? "#ffffff" : "#000000"
@@ -390,6 +404,7 @@ Item {
                                 Behavior on color {
                                     ColorAnimation { duration: 400; easing.type: Easing.OutCubic }
                                 }
+                                // 当内容宽度变化时，更新父项目标宽度
                                 onContentWidthChanged: updateTargetWidth()
                                 onImplicitWidthChanged: updateTargetWidth()
                             }
@@ -401,12 +416,12 @@ Item {
                 Component {
                     id: separatorComponent
                     Item {
-                        width: 10
-                        height: lessonsBackend.mode === "normal" ? 40 : 46
+                        width: 10 * lessonsBackend.scaleFactor
+                        height: (lessonsBackend.mode === "normal" ? 40 : 46) * lessonsBackend.scaleFactor
 
                         Rectangle {
-                            width: 2
-                            height: 32
+                            width: 2 * lessonsBackend.scaleFactor
+                            height: 32 * lessonsBackend.scaleFactor
                             anchors.centerIn: parent
                             gradient: Gradient {
                                 GradientStop { position: 0.0; color: "transparent" }
@@ -423,18 +438,18 @@ Item {
                     id: placeholderComponent
                     Item {
                         property real textWidth: placeholderText.contentWidth
-                        property real iconWidth: 24
-                        width: iconWidth + 8 + textWidth + 20
-                        height: lessonsBackend.mode === "normal" ? 40 : 46
+                        property real iconWidth: 24 * lessonsBackend.scaleFactor
+                        width: iconWidth + 8 * lessonsBackend.scaleFactor + textWidth + 20 * lessonsBackend.scaleFactor
+                        height: (lessonsBackend.mode === "normal" ? 40 : 46) * lessonsBackend.scaleFactor
 
                         Row {
                             anchors.centerIn: parent
-                            spacing: 8
+                            spacing: 8 * lessonsBackend.scaleFactor
 
                             Icon {
-                                width: 24
+                                width: 24 * lessonsBackend.scaleFactor
                                 height: parent.height
-                                size: 24
+                                size: 24 * lessonsBackend.scaleFactor
                                 icon: modelData.icon
                                 color: effectiveDarkTheme ? "#ffffff" : "#000000"
                             }
@@ -442,7 +457,7 @@ Item {
                             Text {
                                 id: placeholderText
                                 text: modelData.text
-                                font.pixelSize: 16
+                                font.pixelSize: 16 * lessonsBackend.scaleFactor
                                 font.family: lessonsBackend.fontFamily
                                 font.weight: lessonsBackend.fontWeight
                                 color: effectiveDarkTheme ? "#ffffff" : "#000000"
@@ -476,6 +491,7 @@ Item {
                 }
             }
 
+            // 从后端接收滚动请求
             Connections {
                 target: lessonsBackend
                 function onScrollRequested(index) {
@@ -485,6 +501,7 @@ Item {
                 }
             }
 
+            // 滚动到指定索引（左20%位置，带动画）
             function scrollToIndex(index) {
                 forceLayout()
                 if (!autoScrollEnabled) return
@@ -499,6 +516,7 @@ Item {
                 scrollAnimation.start()
             }
 
+            // 内部滚动到当前高亮课程
             function scrollToCurrentLesson() {
                 var targetId = lessonsBackend.currentLessonId || lessonsBackend.nextLessonId
                 if (!targetId) return
@@ -511,6 +529,7 @@ Item {
                 }
             }
 
+            // 滚动动画（供自动滚动和滚轮共用）
             NumberAnimation {
                 id: scrollAnimation
                 target: lessonsListView
@@ -519,6 +538,7 @@ Item {
                 easing.type: Easing.OutCubic
             }
 
+            // 监听课程变化，立即滚动（如果允许）
             Connections {
                 target: lessonsBackend
                 function onCurrentLessonIdChanged() {
@@ -541,18 +561,20 @@ Item {
             width: calculateSpacerWidth()
         }
 
-        Item { width: 16; height: parent.height }
+        Item { width: 16 * lessonsBackend.scaleFactor; height: parent.height }
 
         // 按钮1：白板模式/切换
         RoundButton {
             id: button1
-            implicitWidth: 30
-            implicitHeight: 30
+            implicitWidth: 30 * lessonsBackend.scaleFactor
+            implicitHeight: 30 * lessonsBackend.scaleFactor
             icon.name: {
                 if (lessonsBackend.mode === "whiteboard") return "ic_fluent_weather_moon_20_regular"
                 if (lessonsBackend.mode === "blackboard") return "ic_fluent_weather_sunny_20_regular"
-                return "ic_fluent_weather_sunny_20_regular"
+                return "ic_fluent_weather_sunny_20_regular" // 正常模式为白板模式
             }
+            icon.width: 18 * lessonsBackend.scaleFactor
+            icon.height: 18 * lessonsBackend.scaleFactor
             anchors.verticalCenter: parent.verticalCenter
             highlighted: effectiveDarkTheme
             primaryColor: effectiveDarkTheme ? "#444" : undefined
@@ -567,17 +589,19 @@ Item {
             }
         }
 
-        Item { width: 12; height: parent.height }
+        Item { width: 12 * lessonsBackend.scaleFactor; height: parent.height }
 
         // 按钮2：熄屏模式/退出
         RoundButton {
             id: button2
-            implicitWidth: 30
-            implicitHeight: 30
+            implicitWidth: 30 * lessonsBackend.scaleFactor
+            implicitHeight: 30 * lessonsBackend.scaleFactor
             icon.name: {
                 if (lessonsBackend.mode !== "normal") return "ic_fluent_arrow_exit_20_regular"
-                return "ic_fluent_weather_moon_20_regular"
+                return "ic_fluent_weather_moon_20_regular" // 正常模式为熄屏模式
             }
+            icon.width: 18 * lessonsBackend.scaleFactor
+            icon.height: 18 * lessonsBackend.scaleFactor
             anchors.verticalCenter: parent.verticalCenter
             highlighted: effectiveDarkTheme
             primaryColor: effectiveDarkTheme ? "#444" : undefined
@@ -590,25 +614,26 @@ Item {
             }
         }
 
-        Item { width: 13; height: parent.height }
+        Item { width: 13 * lessonsBackend.scaleFactor; height: parent.height }
     }
 
-    // 计算列表视图宽度
+    // 计算列表视图宽度（限制为内容宽度或可用宽度的较小值）
     function calculateListViewWidth() {
-        var fixedWidth = 13 + 30 + 16 + 16 + 30 + 12 + 30 + 13
+        var fixedWidth = (13 + 30 + 16 + 16 + 30 + 12 + 30 + 13) * lessonsBackend.scaleFactor
         var availableWidth = root.width - fixedWidth
         var contentWidth = lessonsListView.contentWidth
         return Math.min(contentWidth, availableWidth)
     }
 
-    // 计算空白宽度
+    // 计算空白宽度（左右相等）
     function calculateSpacerWidth() {
-        var fixedWidth = 13 + 30 + 16 + 16 + 30 + 12 + 30 + 13
+        var fixedWidth = (13 + 30 + 16 + 16 + 30 + 12 + 30 + 13) * lessonsBackend.scaleFactor
         var availableWidth = root.width - fixedWidth
         var listWidth = calculateListViewWidth()
         return Math.max(0, (availableWidth - listWidth) / 2)
     }
 
+    // 当内容或尺寸变化时更新布局，并确保滚动位置不越界
     Connections {
         target: lessonsBackend
         function onLessonsUpdated() {
@@ -624,6 +649,7 @@ Item {
         }
     }
 
+    // 初始绑定
     Component.onCompleted: {
         leftSpacer.width = Qt.binding(calculateSpacerWidth)
         rightSpacer.width = Qt.binding(calculateSpacerWidth)
