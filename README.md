@@ -102,14 +102,67 @@
 
 5. 完成！
 
+## 🤔 常见问题 / FAQ
+此处列举了一些你可能关心的问题。单击问题可以展开查看相关解答。
 
-## ❤️ 致谢 / Acknowledgements
+<details>
+<summary><b>本插件的更新频率？为什么很久都没有更新了？</b></summary>
+受到本人学业影响，6 月前将暂时不会有任何重大更新。😣
+
+更多更新会在6月中下旬陆续发布，敬请期待！🙏
+</details>
+
+
+<details>
+<summary><b>为什么现在图标上有 PRE 字样？预览版是什么意思？</b></summary>
+PRE 是 Preview 的缩写，说明本插件尚处于开发中，可能存在一些未完成的功能和一些小问题。
+
+发布预览版的目的是为了让用户提前体验和反馈，以便在正式版发布前进行改进和优化。❤️
+</details>
+
+
+<details>
+<summary><b>正式版什么时候发布？正式版会有哪些功能？</b></summary>
+正式版计划在 7 月初发布。
+
+正式版将添加：
+- 插件右键菜单和插件设置页。
+- 其它一些小功能和细节优化。
+</details>
+
+
+<details>
+<summary><b>为什么课程列表始终置底？</b></summary>
+这是目前的设计行为。目的是防止置顶的课程列表影响老师的窗口操作。
+
+在正式版中，我会考虑在设置中添加一个选项来允许用户自定义课程列表的窗口标志（置底或置顶）。😊
+</details>
+
+
+<details>
+<summary><b>为什么熄屏模式或白板模式会在下课时主动关闭？</b></summary>
+这同样是目前的设计行为。因为不是每节课都需要使用熄屏模式或白板模式。
+
+在正式版中，会在设置中添加是否启用自动关闭的选项。
+</details>
+
+
+<details>
+<summary><b>熄屏模式或白板模式下的倒计时字号好像有点小？</b></summary>
+我也注意到这个问题了。
+
+在正式版中，会在设置中添加相关的自定义选项。
+</details>
+
+如果你有更多功能建议或遇到任何问题，欢迎在 [GitHub Issues](https://github.com/Yersmagit/cw2-lessons-displayer/issues) 中指出！
+
+## 📘 其它 / Others
 ### 引用资源 / Credits
 - [Class Widgets 2](https://github.com/rinlit-233-shiroko/class-widgets-2)
 - [Class Widgets 2 SDK](https://github.com/Class-Widgets/class-widgets-sdk)
 - [RinUI](https://ui.rinlit.cn/)
 
-## ⚖️ 版权 / License
+### 版权 / License
 本项目基于 MIT 协议开源，详情请参阅 [LICENSE](https://github.com/rinlit-233-shiroko/class-widgets-2-plugin-template/blob/main/LICENSE) 文件。
 
 The project is licensed under the MIT license. Please refer to the [LICENSE](https://github.com/rinlit-233-shiroko/class-widgets-2-plugin-template/blob/main/LICENSE) file for details.
