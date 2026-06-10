@@ -395,7 +395,7 @@ Item {
                             Text {
                                 id: remainingText
                                 text: lessonsBackend.currentRemainingText
-                                font.pixelSize: 16 * lessonsBackend.scaleFactor
+                                font.pixelSize: 18 * lessonsBackend.scaleFactor
                                 font.family: lessonsBackend.fontFamily
                                 font.weight: lessonsBackend.fontWeight
                                 color: effectiveDarkTheme ? "#ffffff" : "#000000"
@@ -457,7 +457,7 @@ Item {
                             Text {
                                 id: placeholderText
                                 text: modelData.text
-                                font.pixelSize: 16 * lessonsBackend.scaleFactor
+                                font.pixelSize: 18 * lessonsBackend.scaleFactor
                                 font.family: lessonsBackend.fontFamily
                                 font.weight: lessonsBackend.fontWeight
                                 color: effectiveDarkTheme ? "#ffffff" : "#000000"

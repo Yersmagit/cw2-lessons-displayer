@@ -167,7 +167,7 @@ class LessonsBackend(QObject):
             e_type = entry.get("type", "")
             if e_type == "break":
                 return False
-            if e_type == "activity" and entry.get("title") in ["大课间", "升旗"]:
+            if e_type == "activity" and entry.get("title") in ["大课间", "升旗", "晚读/晚练", "备考", "进考场"]:
                 return False
             return True
 
