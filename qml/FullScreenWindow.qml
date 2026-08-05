@@ -99,4 +99,37 @@ Window {
 
     signal uiReady()
     signal specialAnimationFinished()
+
+    // 右键菜单（模仿主程序小组件右键菜单）：一般模式仅"设置"，
+    // 特殊模式额外提供"退出xx模式"；在鼠标位置弹出并钳制到可见区域。
+    RightClickMenu {
+        id: widgetMenu
+    }
+
+    // 右键触发 + 菜单已打开时关闭。
+    // 菜单未打开：右键在空白/胶囊处打开；菜单已打开：点击空白（右键关闭，左键由
+    // closePolicy 关闭）不再重新打开。
+    MouseArea {
+        id: rightClickArea
+        anchors.fill: parent
+        acceptedButtons: Qt.RightButton
+        propagateComposedEvents: true
+        z: 999
+        // 记录右键按下时菜单是否已打开：若已打开，松开后（closePolicy 已关闭菜单）
+        // 不应在空白处再次打开
+        property bool pressWhileOpen: false
+        onPressed: {
+            if (widgetMenu.opened) {
+                pressWhileOpen = true
+            }
+        }
+        onClicked: (mouse) => {
+            if (widgetMenu.opened) {
+                widgetMenu.close()
+            } else if (!pressWhileOpen) {
+                widgetMenu.openAt(mouse.x, mouse.y)
+            }
+            pressWhileOpen = false
+        }
+    }
 }

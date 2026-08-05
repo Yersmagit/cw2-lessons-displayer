@@ -439,6 +439,28 @@ class LessonsBackend(QObject):
     def exitSpecialMode(self):
         self._set_mode("normal")
 
+    @Slot()
+    def hideWidgetMask(self):
+        """右键菜单显示时移除窗口 mask（仅正常模式），使菜单可显示在胶囊形 UI 之外任意位置。
+        由 QML 右键菜单 onOpened 调用；关闭后由 showWidgetMask 恢复。"""
+        try:
+            if self.plugin.window and self.mode == "normal":
+                self.plugin._mask_enabled = False
+                self.plugin.window.setMask(QRegion())
+        except Exception as e:
+            plugin_logger.debug(f"移除 mask 失败: {e}")
+
+    @Slot()
+    def showWidgetMask(self):
+        """右键菜单关闭时恢复窗口 mask（仅正常模式），恢复正常胶囊显示。
+        由 QML 右键菜单 onClosed 调用。"""
+        try:
+            if self.plugin.window and self.mode == "normal":
+                self.plugin._mask_enabled = True
+                self.plugin._update_mask()
+        except Exception as e:
+            plugin_logger.debug(f"恢复 mask 失败: {e}")
+
     @Slot(result=bool)
     def isUiAboveTaskbar(self):
         """检测当前 UI 是否位于任务栏上层（供 QML 监测/调试用）"""
