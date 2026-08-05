@@ -41,6 +41,7 @@ class LessonsBackend(QObject):
     fontChanged = Signal()  
     bgOpacityChanged = Signal()
     scaleFactorChanged = Signal()
+    switchingChanged = Signal()
 
     def __init__(self, plugin):
         super().__init__()
@@ -66,6 +67,9 @@ class LessonsBackend(QObject):
         self._auto_close_timer.timeout.connect(self._on_auto_close_timeout)
         self._auto_close_timer.setSingleShot(True)
         self._in_auto_close_status = False
+
+        # 特殊模式窗口切换标记（切换期间禁用按钮，防止误操作）
+        self._switching = False
 
         # 初始化字体
         self._update_font()
@@ -435,6 +439,14 @@ class LessonsBackend(QObject):
     def exitSpecialMode(self):
         self._set_mode("normal")
 
+    @Slot(result=bool)
+    def isUiAboveTaskbar(self):
+        """检测当前 UI 是否位于任务栏上层（供 QML 监测/调试用）"""
+        try:
+            return self.plugin._is_above_taskbar()
+        except Exception:
+            return True
+
     @Property(str, notify=modeChanged)
     def mode(self):
         return self._mode
@@ -499,6 +511,16 @@ class LessonsBackend(QObject):
     def scaleFactor(self):
         return self._scale_factor
 
+    def set_switching(self, value):
+        """设置窗口切换标记（切换期间禁用按钮，防止误操作）"""
+        if value != self._switching:
+            self._switching = bool(value)
+            self.switchingChanged.emit()
+
+    @Property(bool, notify=switchingChanged)
+    def switching(self):
+        return self._switching
+
 
 class Plugin(CW2Plugin):
     def __init__(self, api):
@@ -517,6 +539,10 @@ class Plugin(CW2Plugin):
         self._scroll_timer = None
         self._configs = None
         self._mask_enabled = True
+
+        # 特殊模式专用全屏窗口（进入特殊模式后重建，以全新状态置顶显示）
+        self.special_engine = None
+        self.special_window = None
 
         self._cursor_timer = QTimer()
         self._cursor_timer.timeout.connect(self._check_mouse_idle)
@@ -597,6 +623,13 @@ class Plugin(CW2Plugin):
             self.window.uiReady.connect(self._on_ui_ready)
             plugin_logger.debug("已连接 uiReady 信号")
 
+            # 特殊模式启动动画播放完成后，显示已准备好的专用窗口
+            try:
+                self.window.specialAnimationFinished.connect(self._on_special_animation_finished)
+                plugin_logger.debug("已连接 specialAnimationFinished 信号")
+            except Exception as e:
+                plugin_logger.debug(f"连接 specialAnimationFinished 失败: {e}")
+
             QTimer.singleShot(5000, self._check_ui_ready_timeout)
 
             plugin_logger.info("全屏窗口已创建（隐藏状态）")
@@ -625,6 +658,8 @@ class Plugin(CW2Plugin):
         if not self.window or not self.backend:
             return
         if self.backend.mode != "normal":
+            # 特殊模式下持续强制置顶，防止窗口层级被重置导致任务栏露出
+            self._force_topmost()
             return
         try:
             main_window = self.api._app.widgets_window
@@ -833,9 +868,211 @@ class Plugin(CW2Plugin):
         self._mask_enabled = True
         self._update_mask()
 
+    def _make_foreground_window(self, hwnd):
+        """将窗口设为系统前台窗口（绕过 Windows 前台锁定）
+
+        任务栏由系统按"前台窗口"管理：只有前台窗口是全屏置顶窗口时，
+        任务栏才会保持在窗口下方。若其它窗口（如资源管理器）是前台，
+        任务栏会浮在置顶窗口之上。这里用 AttachThreadInput 技巧绕过
+        前台锁定，确保可靠地置为前台。
+        """
+        try:
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            if user32.GetForegroundWindow() == hwnd:
+                return
+            current_tid = kernel32.GetCurrentThreadId()
+            fg_hwnd = user32.GetForegroundWindow()
+            fg_tid = user32.GetWindowThreadProcessId(fg_hwnd, None)
+            attached = False
+            if fg_tid and fg_tid != current_tid:
+                if user32.AttachThreadInput(current_tid, fg_tid, True):
+                    attached = True
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+            if attached:
+                user32.AttachThreadInput(current_tid, fg_tid, False)
+        except Exception as e:
+            plugin_logger.debug(f"设置前台窗口失败: {e}")
+
+    def _active_window(self):
+        """特殊模式下若专用窗口已显示则使用它，否则使用主窗口"""
+        if (self.backend and self.backend.mode != "normal"
+                and self.special_window and self.special_window.isVisible()):
+            return self.special_window
+        return self.window
+
+    def _is_above_taskbar(self, hwnd=None):
+        """检测窗口是否位于任务栏上层（覆盖任务栏）
+
+        任务栏由系统按"前台窗口"动态管理（静态 z 序不可靠）：只有前台
+        窗口为全屏置顶窗口时任务栏才会保持在窗口下方。因此判定条件：
+        1) 窗口是系统前台窗口（GetForegroundWindow）
+        2) 窗口是置顶窗口（WS_EX_TOPMOST）
+        3) 窗口矩形覆盖到屏幕底部（任务栏区域）
+        三者同时满足才认为 UI 位于任务栏上层、任务栏被其覆盖。
+        """
+        if sys.platform != 'win32':
+            return True
+        try:
+            user32 = ctypes.windll.user32
+            if hwnd is None:
+                win = self._active_window()
+                if not win:
+                    return False
+                hwnd = int(win.winId())
+
+            # 1) 必须是系统前台窗口，否则系统会让任务栏浮在其上
+            if user32.GetForegroundWindow() != hwnd:
+                return False
+
+            # 2) 必须是置顶窗口
+            GWL_EXSTYLE = -20
+            WS_EX_TOPMOST = 0x00000008
+            if not (user32.GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST):
+                return False
+
+            # 3) 必须覆盖到屏幕底部（任务栏所在区域）
+            class RECT(ctypes.Structure):
+                _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                            ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+            r = RECT()
+            user32.GetWindowRect(hwnd, ctypes.byref(r))
+            screen = QGuiApplication.primaryScreen()
+            if screen:
+                geo = screen.geometry()
+                if r.bottom < geo.y() + geo.height():
+                    return False
+
+            return True
+        except Exception as e:
+            plugin_logger.debug(f"检测任务栏层级失败: {e}")
+            return True
+
+    def _force_topmost(self):
+        """重新强制窗口置顶并置为前台（Windows），确保全屏模式下覆盖任务栏
+
+        在 QML 全屏过渡/窗口状态切换完成后再调用一次，避免过渡期间
+        窗口层级被重置到任务栏之下导致任务栏露出。
+        """
+        if not self.window or not self.backend:
+            return
+        if self.backend.mode == "normal":
+            return
+        if sys.platform != 'win32':
+            return
+        win = self._active_window()
+        if not win:
+            return
+        try:
+            # 先确保 Qt 层窗口标志一致（防止此前被意外清除导致置顶失效）
+            if not (win.flags() & Qt.WindowStaysOnTopHint):
+                win.setFlag(Qt.WindowStaysOnTopHint, True)
+            hwnd = int(win.winId())
+            HWND_TOPMOST = -1
+            SWP_NOMOVE = 0x0002
+            SWP_NOSIZE = 0x0001
+            SWP_NOACTIVATE = 0x0010
+            ctypes.windll.user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                                              SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
+            win.raise_()
+            # 关键：保持前台，否则任务栏会浮在窗口之上
+            self._make_foreground_window(hwnd)
+        except Exception as e:
+            plugin_logger.debug(f"强制置顶失败: {e}")
+
+    def _prepare_special_window(self):
+        """按钮按下时即开始创建专用全屏窗口（隐藏，暂不显示）
+
+        立即创建隐藏的专用窗口并加载内容（利用旧窗口播放启动动画的时间作为
+        加载时间）；待旧窗口动画播放完成后由 _on_special_animation_finished
+        直接显示（无渐变动画），然后隐藏旧窗口。总是刷新 UI。
+        """
+        if not self.backend or self.backend.mode == "normal":
+            return
+        if self.special_window or self.special_engine:
+            return
+        try:
+            self.backend.set_switching(True)
+            engine = QQmlApplicationEngine()
+            engine.rootContext().setContextProperty("lessonsBackend", self.backend)
+            # 复制主引擎的导入路径（保证 RinUI 等可用）
+            try:
+                for p in self.engine.importPathList():
+                    engine.addImportPath(p)
+            except Exception:
+                pass
+            qml_path = os.path.join(self.PATH, "qml", "SpecialModeWindow.qml")
+            engine.load(QUrl.fromLocalFile(qml_path))
+            if not engine.rootObjects():
+                plugin_logger.error("创建特殊模式窗口失败：无根对象")
+                engine.deleteLater()
+                self.backend.set_switching(False)
+                return
+            win = engine.rootObjects()[0]
+            self.special_engine = engine
+            self.special_window = win
+            # 保持隐藏，等待旧窗口动画完成信号后直接显示
+            plugin_logger.info("特殊模式专用窗口已创建（隐藏，等待旧窗口动画完成）")
+            # 兜底：即使动画完成信号未触发，也确保专用窗口显示并恢复按钮
+            QTimer.singleShot(1500, self._on_special_animation_finished)
+            QTimer.singleShot(3000, lambda: self.backend.set_switching(False))
+        except Exception as e:
+            plugin_logger.error(f"创建特殊模式窗口异常: {e}")
+            self._destroy_special_window()
+            self.backend.set_switching(False)
+
+    def _on_special_animation_finished(self):
+        """旧窗口启动动画播放完成：直接显示专用窗口（无渐变动画），然后隐藏旧窗口"""
+        if not self.backend:
+            return
+        if self.backend.mode == "normal":
+            self._destroy_special_window()
+            return
+        if not self.special_window:
+            self.backend.set_switching(False)
+            return
+        try:
+            # 直接显示（无透明度渐变动画），并设为全屏 + 强制置顶 + 设为前台。
+            # 注意：QML 中不能写常量 visibility:FullScreen（会导致创建即显示），
+            # 因此在此处由 Python 显式设置全屏状态。
+            self.special_window.show()
+            self.special_window.setWindowState(Qt.WindowFullScreen)
+            self._force_topmost()
+            # 隐藏旧窗口
+            if self.window and self.window is not self.special_window:
+                self.window.hide()
+            self.backend.set_switching(False)
+            plugin_logger.info("特殊模式专用窗口已直接显示，旧窗口已隐藏")
+        except Exception as e:
+            plugin_logger.error(f"显示特殊模式窗口失败: {e}")
+            self.backend.set_switching(False)
+
+    def _destroy_special_window(self):
+        """销毁特殊模式专用窗口"""
+        if self.special_window:
+            try:
+                self.special_window.close()
+                self.special_window.deleteLater()
+            except Exception:
+                pass
+            self.special_window = None
+        if self.special_engine:
+            try:
+                self.special_engine.deleteLater()
+            except Exception:
+                pass
+            self.special_engine = None
+        if self.backend:
+            self.backend.set_switching(False)
+
     def _on_mode_changed(self):
         mode = self.backend.mode
         if mode == "normal":
+            # 销毁特殊模式专用窗口并恢复主窗口显示
+            self._destroy_special_window()
+            if self.window:
+                self.window.show()
             self.window.setMask(QRegion())
             self._mask_enabled = False
             self.window.setFlag(Qt.WindowStaysOnTopHint, False)
@@ -874,9 +1111,25 @@ class Plugin(CW2Plugin):
                 except Exception as e:
                     plugin_logger.debug(f"强制置顶失败: {e}")
             self.window.raise_()
-            self.window.activateWindow()
+            # QQuickWindow 没有 activateWindow()，须使用 QWindow 的 requestActivate()，
+            # 否则每次进入特殊模式都会抛 AttributeError，导致后续延迟置顶不执行
+            self.window.requestActivate()
+            # 关键：立即把窗口设为系统前台窗口。否则若其它窗口（如资源管理器）
+            # 是前台，系统会让任务栏浮在置顶窗口之上（100%复现的露出任务栏问题）。
+            self._make_foreground_window(int(self.window.winId()))
+
+            # 延迟再次强制置顶：等待 QML 全屏过渡/窗口状态切换完成后再
+            # 重新置顶，确保窗口完全覆盖任务栏（修复偶发露出任务栏问题）。
+            # _force_topmost 内部会校验仍处于特殊模式，退出后自动忽略。
+            QTimer.singleShot(400, self._force_topmost)
+            QTimer.singleShot(1200, self._force_topmost)
+
+            # 按钮按下即开始创建隐藏的专用全屏窗口（利用旧窗口启动动画时间
+            # 作为加载时间），旧窗口动画完成后由信号驱动其直接显示并隐藏旧窗口。
+            self._prepare_special_window()
 
     def on_unload(self):
+        self._destroy_special_window()
         if self._cursor_timer:
             self._cursor_timer.stop()
             self._cursor_timer.deleteLater()
