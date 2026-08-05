@@ -628,6 +628,9 @@ class Plugin(CW2Plugin):
         self.backend.update_lessons()
         self.backend.set_dark_theme(self.is_dark_theme)
         self.backend.update_position()
+        # 首次显示前确保初始 opacity 为 0：update_position() 会把 opacity 置 1，
+        # 若不重置，uiLoader 加载后内容直接可见（出现"先显示→隐藏→再淡入"）。
+        self.backend.set_ui_opacity(0)
         self.backend.modeChanged.connect(self._on_mode_changed)
         plugin_logger.debug("已连接 modeChanged 信号")
 
