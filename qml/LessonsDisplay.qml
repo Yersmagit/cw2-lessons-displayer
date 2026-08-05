@@ -571,6 +571,7 @@ Item {
         RoundButton {
             id: button1
             enabled: !lessonsBackend.switching  // 窗口切换期间禁用，防止误操作
+            hoverEnabled: true  // 使 hovered 生效，用于文本提示
             implicitWidth: 30 * lessonsBackend.scaleFactor
             implicitHeight: 30 * lessonsBackend.scaleFactor
             icon.name: {
@@ -600,6 +601,7 @@ Item {
         RoundButton {
             id: button2
             enabled: !lessonsBackend.switching  // 窗口切换期间禁用，防止误操作
+            hoverEnabled: true  // 使 hovered 生效，用于文本提示
             implicitWidth: 30 * lessonsBackend.scaleFactor
             implicitHeight: 30 * lessonsBackend.scaleFactor
             icon.name: {
@@ -621,6 +623,101 @@ Item {
         }
 
         Item { width: 13 * lessonsBackend.scaleFactor; height: parent.height }
+    }
+
+    // ===== 按钮文本提示（tooltip）=====
+    // 悬停按钮时（无延迟）显示；圆角 6px、高度 30、左右边距 9；x 居中于对应按钮，
+    // y 顶部距胶囊下边框 5px。显示/隐藏均有 150ms 透明度渐变动画。
+    // 一般模式下窗口带 mask：显示时立即通知后端移除（不遮挡），隐藏时等淡出动画
+    // 结束后再恢复 mask（引用计数避免与右键菜单冲突）。
+    Rectangle {
+        id: tooltip1
+        width: tip1Text.implicitWidth + 18
+        height: 30
+        radius: 6
+        border.width: 1
+        color: effectiveDarkTheme ? "#2c2c2c" : "#F9F9F9"
+        border.color: effectiveDarkTheme ? Qt.rgba(1, 1, 1, 0.2) : Qt.rgba(0, 0, 0, 0.0578)
+        x: button1.x + button1.width / 2 - width / 2
+        y: root.height + 5
+        z: 10
+        opacity: button1.hovered ? 1 : 0
+        visible: opacity > 0.01
+        Behavior on opacity {
+            NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+        }
+        property bool maskActive: false
+        onVisibleChanged: {
+            if (visible && !maskActive) {
+                lessonsBackend.hideWidgetMask()
+                maskActive = true
+            } else if (!visible && maskActive) {
+                fadeOutTimer1.start()
+            }
+        }
+        Timer {
+            id: fadeOutTimer1
+            interval: 160
+            onTriggered: {
+                if (tooltip1.maskActive && !tooltip1.visible) {
+                    lessonsBackend.showWidgetMask()
+                    tooltip1.maskActive = false
+                }
+            }
+        }
+        Text {
+            id: tip1Text
+            anchors.centerIn: parent
+            text: lessonsBackend.mode === "whiteboard" ? qsTr("熄屏模式") : qsTr("白板模式")
+            font.pixelSize: 12 * lessonsBackend.scaleFactor
+            font.family: lessonsBackend.fontFamily
+            color: effectiveDarkTheme ? "#ffffff" : "#000000"
+        }
+    }
+
+    Rectangle {
+        id: tooltip2
+        width: tip2Text.implicitWidth + 18
+        height: 30
+        radius: 6
+        border.width: 1
+        color: effectiveDarkTheme ? "#2c2c2c" : "#F9F9F9"
+        border.color: effectiveDarkTheme ? Qt.rgba(1, 1, 1, 0.2) : Qt.rgba(0, 0, 0, 0.0578)
+        x: button2.x + button2.width / 2 - width / 2
+        y: root.height + 5
+        z: 10
+        opacity: button2.hovered ? 1 : 0
+        visible: opacity > 0.01
+        Behavior on opacity {
+            NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+        }
+        property bool maskActive: false
+        onVisibleChanged: {
+            if (visible && !maskActive) {
+                lessonsBackend.hideWidgetMask()
+                maskActive = true
+            } else if (!visible && maskActive) {
+                fadeOutTimer2.start()
+            }
+        }
+        Timer {
+            id: fadeOutTimer2
+            interval: 160
+            onTriggered: {
+                if (tooltip2.maskActive && !tooltip2.visible) {
+                    lessonsBackend.showWidgetMask()
+                    tooltip2.maskActive = false
+                }
+            }
+        }
+        Text {
+            id: tip2Text
+            anchors.centerIn: parent
+            text: lessonsBackend.mode === "normal" ? qsTr("熄屏模式") : qsTr("退出")
+            font.pixelSize: 12 * lessonsBackend.scaleFactor
+            font.family: lessonsBackend.fontFamily
+            color: effectiveDarkTheme ? "#ffffff" : "#000000"
+        }
     }
 
     // 列表可用宽度（固定：总宽减去两侧固定元素，不依赖 ListView 自身 contentWidth）

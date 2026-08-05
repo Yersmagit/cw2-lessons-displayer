@@ -71,6 +71,9 @@ class LessonsBackend(QObject):
         # 特殊模式窗口切换标记（切换期间禁用按钮，防止误操作）
         self._switching = False
 
+        # 移除窗口 mask 的引用计数（右键菜单/文本提示可同时占用，归零才恢复）
+        self._mask_hide_refs = 0
+
         # 初始化字体
         self._update_font()
 
@@ -441,9 +444,10 @@ class LessonsBackend(QObject):
 
     @Slot()
     def hideWidgetMask(self):
-        """右键菜单显示时移除窗口 mask（仅正常模式），使菜单可显示在胶囊形 UI 之外任意位置。
-        由 QML 右键菜单 onOpened 调用；关闭后由 showWidgetMask 恢复。"""
+        """请求移除窗口 mask（引用计数：右键菜单 / 按钮文本提示可同时占用）。
+        仅正常模式真正操作 mask；所有模式都累计引用计数，避免相互覆盖。"""
         try:
+            self._mask_hide_refs += 1
             if self.plugin.window and self.mode == "normal":
                 self.plugin._mask_enabled = False
                 self.plugin.window.setMask(QRegion())
@@ -452,10 +456,10 @@ class LessonsBackend(QObject):
 
     @Slot()
     def showWidgetMask(self):
-        """右键菜单关闭时恢复窗口 mask（仅正常模式），恢复正常胶囊显示。
-        由 QML 右键菜单 onClosed 调用。"""
+        """释放 mask 占用；引用计数归零且处于正常模式时恢复窗口 mask。"""
         try:
-            if self.plugin.window and self.mode == "normal":
+            self._mask_hide_refs = max(0, self._mask_hide_refs - 1)
+            if self.plugin.window and self.mode == "normal" and self._mask_hide_refs == 0:
                 self.plugin._mask_enabled = True
                 self.plugin._update_mask()
         except Exception as e:

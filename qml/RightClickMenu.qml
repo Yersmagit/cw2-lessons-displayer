@@ -80,19 +80,28 @@ Menu {
 
     // 在指定位置（窗口内坐标）弹出；显示前完成定位与屏幕边缘避让。
     function openAt(x, y) {
+        // 让菜单跟随深浅色主题（插件独立引擎无 ThemeManager，RinUI 默认浅色，
+        // 这里在打开前手动切换 currentTheme，菜单项/背景色随之更新）
+        Theme.currentTheme = lessonsBackend.isDarkTheme ? Theme.dark : Theme.light
         var targetX = x
         var targetY = y
 
         // 避让胶囊形 UI：右键点在胶囊区域内时，菜单放到胶囊下边框下方 5px（横坐标不变）。
-        // 仅正常模式存在胶囊（特殊模式为全屏窗口，直接在鼠标位置弹出）。
+        // 正常模式胶囊=小组件本体（uiX/uiY/uiWidth）；特殊模式胶囊=顶部课程条
+        // （左上角 4,4，宽度=屏幕宽-8）。
+        var capX, capY, capW
         if (lessonsBackend.mode === "normal") {
-            var capX = lessonsBackend.uiX
-            var capY = lessonsBackend.uiY
-            var capW = lessonsBackend.uiWidth
-            var capH = 54 * lessonsBackend.scaleFactor
-            if (x >= capX && x <= capX + capW && y >= capY && y <= capY + capH) {
-                targetY = capY + capH + 5
-            }
+            capX = lessonsBackend.uiX
+            capY = lessonsBackend.uiY
+            capW = lessonsBackend.uiWidth
+        } else {
+            capX = 4
+            capY = 4
+            capW = Screen.width - 8
+        }
+        var capH = 54 * lessonsBackend.scaleFactor
+        if (x >= capX && x <= capX + capW && y >= capY && y <= capY + capH) {
+            targetY = capY + capH + 5
         }
 
         // 预估菜单尺寸（用当前/隐式尺寸，保证避让在显示前完成）
