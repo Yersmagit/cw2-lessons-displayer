@@ -87,5 +87,16 @@ Window {
         Qt.callLater(checkLoader)
     }
 
+    // 特殊模式启动动画（背景淡入、胶囊展开等，时长 400ms）播放完成后发出信号，
+    // 通知已隐藏准备好的专用全屏窗口直接显示（无渐变动画），然后隐藏本窗口。
+    Timer {
+        id: specialAnimTimer
+        interval: 400
+        running: lessonsBackend.mode !== "normal"
+        repeat: false
+        onTriggered: root.specialAnimationFinished()
+    }
+
     signal uiReady()
+    signal specialAnimationFinished()
 }

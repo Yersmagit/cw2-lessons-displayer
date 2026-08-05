@@ -114,11 +114,11 @@ Item {
 
         Item { width: 16 * lessonsBackend.scaleFactor; height: parent.height }
 
-        // 左侧弹性空白
+        // 左侧居中空白：内容放得下时把列表夹在中间；放不下时宽度为 0，列表占满剩余空间
         Item {
             id: leftSpacer
             height: parent.height
-            width: calculateSpacerWidth()
+            width: centerSpacerWidth()
         }
 
         // ========== 课程列表 ==========
@@ -129,8 +129,12 @@ Item {
             clip: true
             height: (lessonsBackend.mode === "normal" ? 40 : 46) * lessonsBackend.scaleFactor
             anchors.verticalCenter: parent.verticalCenter
-            width: calculateListViewWidth()
-            contentWidth: childrenRect.width
+            // 视口宽度 = 可用宽度 - 两侧 spacer：内容放得下时 ListView 与内容同宽并被
+            // 两侧 spacer 夹住居中（contentX 恒为 0）；放不下时 spacer=0，视口占满
+            // 剩余空间，自动滚动/滚动动画等逻辑正常执行。
+            // 注意：不覆盖 contentWidth，用 ListView 自动计算的真实内容宽度（固定宽 delegate，
+            // 与视口宽度无关，无循环绑定）。
+            width: availableListViewWidth() - leftSpacer.width - rightSpacer.width
 
             // 模型改为 displayItems，包含课程和分隔符
             model: lessonsBackend.displayItems
@@ -554,11 +558,11 @@ Item {
         }
         // ========== 课程列表结束 ==========
 
-        // 右侧弹性空白
+        // 右侧居中空白：内容放得下时把列表夹在中间；放不下时宽度为 0，列表占满剩余空间
         Item {
             id: rightSpacer
             height: parent.height
-            width: calculateSpacerWidth()
+            width: centerSpacerWidth()
         }
 
         Item { width: 16 * lessonsBackend.scaleFactor; height: parent.height }
@@ -566,6 +570,7 @@ Item {
         // 按钮1：白板模式/切换
         RoundButton {
             id: button1
+            enabled: !lessonsBackend.switching  // 窗口切换期间禁用，防止误操作
             implicitWidth: 30 * lessonsBackend.scaleFactor
             implicitHeight: 30 * lessonsBackend.scaleFactor
             icon.name: {
@@ -594,6 +599,7 @@ Item {
         // 按钮2：熄屏模式/退出
         RoundButton {
             id: button2
+            enabled: !lessonsBackend.switching  // 窗口切换期间禁用，防止误操作
             implicitWidth: 30 * lessonsBackend.scaleFactor
             implicitHeight: 30 * lessonsBackend.scaleFactor
             icon.name: {
@@ -617,42 +623,22 @@ Item {
         Item { width: 13 * lessonsBackend.scaleFactor; height: parent.height }
     }
 
-    // 计算列表视图宽度（限制为内容宽度或可用宽度的较小值）
-    function calculateListViewWidth() {
+    // 列表可用宽度（固定：总宽减去两侧固定元素，不依赖 ListView 自身 contentWidth）
+    function availableListViewWidth() {
         var fixedWidth = (13 + 30 + 16 + 16 + 30 + 12 + 30 + 13) * lessonsBackend.scaleFactor
-        var availableWidth = root.width - fixedWidth
-        var contentWidth = lessonsListView.contentWidth
-        return Math.min(contentWidth, availableWidth)
+        return root.width - fixedWidth
     }
 
-    // 计算空白宽度（左右相等）
-    function calculateSpacerWidth() {
-        var fixedWidth = (13 + 30 + 16 + 16 + 30 + 12 + 30 + 13) * lessonsBackend.scaleFactor
-        var availableWidth = root.width - fixedWidth
-        var listWidth = calculateListViewWidth()
-        return Math.max(0, (availableWidth - listWidth) / 2)
-    }
-
-    // 当内容或尺寸变化时更新布局，并确保滚动位置不越界
-    Connections {
-        target: lessonsBackend
-        function onLessonsUpdated() {
-            leftSpacer.width = Qt.binding(calculateSpacerWidth)
-            rightSpacer.width = Qt.binding(calculateSpacerWidth)
-            lessonsListView.width = Qt.binding(calculateListViewWidth)
-            Qt.callLater(function() {
-                var maxX = Math.max(0, lessonsListView.contentWidth - lessonsListView.width)
-                if (lessonsListView.contentX > maxX) {
-                    lessonsListView.contentX = maxX
-                }
-            })
+    // 居中 spacer 宽度：内容比可用宽度窄时，左右各占剩余一半
+    // （spacer + 列表内容 + spacer = 可用宽度，列表内容真正居中）；
+    // 内容超出可用宽度时返回 0，让 ListView 占满剩余空间并正常滚动/自动滚动。
+    // 声明式绑定使左右 spacer 与 ListView 宽度在 contentWidth / 窗口宽度变化时自动更新。
+    function centerSpacerWidth() {
+        var aw = availableListViewWidth()
+        var cw = lessonsListView.contentWidth
+        if (cw <= 0) {
+            return 0
         }
-    }
-
-    // 初始绑定
-    Component.onCompleted: {
-        leftSpacer.width = Qt.binding(calculateSpacerWidth)
-        rightSpacer.width = Qt.binding(calculateSpacerWidth)
-        lessonsListView.width = Qt.binding(calculateListViewWidth)
+        return Math.max(0, (aw - cw) / 2)
     }
 }
