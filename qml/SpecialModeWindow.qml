@@ -1,5 +1,9 @@
 import QtQuick 2.15
+import RinUI
 import QtQuick.Window 2.15
+
+// 注意：QtQuick.Window 必须在 RinUI 之后 import，否则根 Window 会被解析为
+// RinUI 的 Window（带标题栏/最小化最大化关闭按钮/纯色背景）。
 
 // 特殊模式（白板/熄屏）专用全屏窗口。
 // 每次进入特殊模式时以隐藏状态创建（visible:false），利用旧窗口启动动画时间完成
@@ -44,6 +48,27 @@ Window {
     }
 
     signal specialReady()
+
+    // 首次启动前先同步一次 RinUI 主题
+    Component.onCompleted: {
+        root.syncRinuiTheme()
+    }
+
+    // 插件深浅色 → RinUI 主题同步：whiteboard 浅 / blackboard 深 / normal 随系统主题。
+    // RinUI 控件（RoundButton/滚动条/右键菜单等）样式由 RinUI 决定。
+    function syncRinuiTheme() {
+        var dark = lessonsBackend.mode === "whiteboard" ? false
+            : lessonsBackend.mode === "blackboard" ? true
+            : lessonsBackend.isDarkTheme
+        Theme.currentTheme = dark ? Theme.dark : Theme.light
+    }
+
+    // 模式/系统主题变化时同步（与 LessonsDisplay 自定义 UI 的 effectiveDarkTheme 同帧更新）
+    Connections {
+        target: lessonsBackend
+        function onModeChanged() { root.syncRinuiTheme() }
+        function onThemeChanged() { root.syncRinuiTheme() }
+    }
 
     // 右键菜单（模仿主程序小组件右键菜单）：特殊模式提供"设置"与"退出xx模式"
     RightClickMenu {

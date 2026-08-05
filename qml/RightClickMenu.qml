@@ -80,9 +80,7 @@ Menu {
 
     // 在指定位置（窗口内坐标）弹出；显示前完成定位与屏幕边缘避让。
     function openAt(x, y) {
-        // 让菜单跟随深浅色主题（插件独立引擎无 ThemeManager，RinUI 默认浅色，
-        // 这里在打开前手动切换 currentTheme，菜单项/背景色随之更新）
-        Theme.currentTheme = lessonsBackend.isDarkTheme ? Theme.dark : Theme.light
+        // RinUI 主题由窗口统一同步（见 FullScreenWindow/SpecialModeWindow.syncRinuiTheme）
         var targetX = x
         var targetY = y
 

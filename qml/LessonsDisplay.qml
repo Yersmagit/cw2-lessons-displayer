@@ -108,8 +108,6 @@ Item {
             icon.width: 18 * lessonsBackend.scaleFactor
             icon.height: 18 * lessonsBackend.scaleFactor
             anchors.verticalCenter: parent.verticalCenter
-            highlighted: effectiveDarkTheme
-            primaryColor: effectiveDarkTheme ? "#444" : undefined
         }
 
         Item { width: 16 * lessonsBackend.scaleFactor; height: parent.height }
@@ -582,8 +580,6 @@ Item {
             icon.width: 18 * lessonsBackend.scaleFactor
             icon.height: 18 * lessonsBackend.scaleFactor
             anchors.verticalCenter: parent.verticalCenter
-            highlighted: effectiveDarkTheme
-            primaryColor: effectiveDarkTheme ? "#444" : undefined
             onClicked: {
                 if (lessonsBackend.mode === "normal") {
                     lessonsBackend.enterWhiteboard()
@@ -611,8 +607,6 @@ Item {
             icon.width: 18 * lessonsBackend.scaleFactor
             icon.height: 18 * lessonsBackend.scaleFactor
             anchors.verticalCenter: parent.verticalCenter
-            highlighted: effectiveDarkTheme
-            primaryColor: effectiveDarkTheme ? "#444" : undefined
             onClicked: {
                 if (lessonsBackend.mode === "normal") {
                     lessonsBackend.enterBlackboard()

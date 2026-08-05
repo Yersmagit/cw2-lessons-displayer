@@ -566,6 +566,11 @@ class Plugin(CW2Plugin):
         self._configs = None
         self._mask_enabled = True
 
+        # 启动淡入：等待宽度变化或超时（见 _on_ui_ready）
+        self._ui_fade_timeout_timer = None
+        self._ui_fade_in_started = False
+        self._initial_ui_width = 0
+
         # 特殊模式专用全屏窗口（进入特殊模式后重建，以全新状态置顶显示）
         self.special_engine = None
         self.special_window = None
@@ -830,14 +835,44 @@ class Plugin(CW2Plugin):
             hide = self._configs.interactions.hide.state
             self.backend.set_ui_opacity(0)
 
-            def show_and_fade():
-                self.window.show()
-                plugin_logger.info("窗口已显示，开始淡入")
-                self.backend.set_ui_opacity(0)
-                target = 0 if hide else 1
-                QTimer.singleShot(50, lambda: self.backend.set_ui_opacity(target))
+            # 启动逻辑：先等胶囊形 UI 从初始宽度变为实际宽度；
+            # 一旦宽度发生变化，或 2 秒内无任何变化，都立即启动淡入
+            # （淡入与宽度过渡动画同时发生）。
+            self._ui_fade_in_started = False
+            self._initial_ui_width = int(self.backend.uiWidth)
+            plugin_logger.debug(f"初始 UI 宽度: {self._initial_ui_width}")
 
-            QTimer.singleShot(0, show_and_fade)
+            def do_fade_in():
+                """宽度已变化或超时：启动淡入（与宽度过渡动画同步进行）"""
+                if self._ui_fade_in_started:
+                    return
+                self._ui_fade_in_started = True
+                if self._ui_fade_timeout_timer:
+                    self._ui_fade_timeout_timer.stop()
+                target = 0 if hide else 1
+                plugin_logger.info("开始淡入（宽度过渡同步进行）")
+                QTimer.singleShot(0, lambda: self.backend.set_ui_opacity(target))
+
+            # 兜底：2 秒内宽度无变化则淡入
+            self._ui_fade_timeout_timer = QTimer()
+            self._ui_fade_timeout_timer.setSingleShot(True)
+            self._ui_fade_timeout_timer.timeout.connect(do_fade_in)
+            self._ui_fade_timeout_timer.start(2000)
+
+            # 宽度首次变化即淡入（仅触发一次）
+            def on_width_first_changed():
+                if int(self.backend.uiWidth) != self._initial_ui_width:
+                    try:
+                        self.backend.widthChanged.disconnect(on_width_first_changed)
+                    except Exception:
+                        pass
+                    do_fade_in()
+
+            self.backend.widthChanged.connect(on_width_first_changed)
+
+            # 显示窗口（opacity 保持 0，内容待淡入）
+            self.window.show()
+            plugin_logger.info("窗口已显示，等待宽度变化后淡入")
 
             self._sync_window_layer()
             self._start_width_polling()
@@ -1165,6 +1200,12 @@ class Plugin(CW2Plugin):
         if self._width_timer:
             self._width_timer.stop()
             self._width_timer.deleteLater()
+        if self._ui_fade_timeout_timer:
+            try:
+                self._ui_fade_timeout_timer.stop()
+                self._ui_fade_timeout_timer.deleteLater()
+            except Exception:
+                pass
         if self._configs:
             try:
                 self._configs.configChanged.disconnect(self._on_config_changed)

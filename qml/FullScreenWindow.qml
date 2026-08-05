@@ -1,6 +1,10 @@
 import QtQuick 2.15
+import RinUI
 import QtQuick.Window 2.15
 
+// 注意：QtQuick.Window 必须在 RinUI 之后 import，否则根 Window 会被解析为
+// RinUI 的 Window（带标题栏/最小化最大化关闭按钮/纯色背景），导致插件窗口
+// 出现系统窗口控件与纯色底。
 Window {
     id: root
     visible: false
@@ -84,7 +88,25 @@ Window {
 
     Component.onCompleted: {
         console.log("FullScreenWindow completed")
+        root.syncRinuiTheme()  // 首次启动前先同步一次 RinUI 主题
         Qt.callLater(checkLoader)
+    }
+
+    // 插件深浅色 → RinUI 主题同步：RinUI 控件（RoundButton/滚动条/右键菜单等）
+    // 样式由 RinUI 决定；深浅色由一般/特殊模式 + 系统主题共同决定
+    // （whiteboard 浅、blackboard 深、normal 随系统主题）。
+    function syncRinuiTheme() {
+        var dark = lessonsBackend.mode === "whiteboard" ? false
+            : lessonsBackend.mode === "blackboard" ? true
+            : lessonsBackend.isDarkTheme
+        Theme.currentTheme = dark ? Theme.dark : Theme.light
+    }
+
+    // 模式/系统主题变化时同步（与 LessonsDisplay 自定义 UI 的 effectiveDarkTheme 同帧更新）
+    Connections {
+        target: lessonsBackend
+        function onModeChanged() { root.syncRinuiTheme() }
+        function onThemeChanged() { root.syncRinuiTheme() }
     }
 
     // 特殊模式启动动画（背景淡入、胶囊展开等，时长 400ms）播放完成后发出信号，
