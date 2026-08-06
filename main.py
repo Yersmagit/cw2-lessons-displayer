@@ -428,11 +428,14 @@ class LessonsBackend(QObject):
 
             self._ui_x = int(x)
             self._ui_y = int(y)
-            self.positionChanged.emit()
 
-            # 动画性能优化：纯平移（位置变化、宽度不变）开始时临时禁用 mask
+            # 动画性能优化：纯平移（位置变化、宽度不变）开始时临时禁用 mask。
+            # 必须在 positionChanged.emit() 之前禁用：动画开始瞬间 emit 触发的
+            # _update_mask 也会因 _mask_enabled=False 被跳过，不做 mask 计算。
             if trigger_anim_optimize and (self._ui_x != old_x or self._ui_y != old_y):
                 self._maybe_begin_translate_anim()
+
+            self.positionChanged.emit()
 
             new_opacity = 0 if hide else 1
             self.set_ui_opacity(new_opacity)
