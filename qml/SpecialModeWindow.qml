@@ -73,6 +73,7 @@ Window {
     // 右键菜单（模仿主程序小组件右键菜单）：特殊模式提供"设置"与"退出xx模式"
     RightClickMenu {
         id: widgetMenu
+        onSettingsRequested: settingsDialog.openDialog()
     }
 
     // 右键触发 + 菜单已打开时关闭。
@@ -100,5 +101,11 @@ Window {
             }
             pressWhileOpen = false
         }
+    }
+
+    // 设置对话框（复用 RinUI Dialog，模态遮罩在 Overlay 层，天然位于最上层）：
+    // 打开时禁用 mask（否则遮罩/对话框被窗口 mask 裁剪），关闭时恢复。
+    SettingsDialog {
+        id: settingsDialog
     }
 }

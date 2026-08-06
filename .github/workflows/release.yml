@@ -35,8 +35,18 @@ jobs:
           pip install class-widgets-sdk
           pip install -e .
 
-      - name: Remove previews directory (exclude from package)
-        run: rm -rf previews/
+      - name: Remove files not meant for packaging (before build)
+        run: |
+          # 运行时生成的配置/日志/缓存等不应打进插件包
+          rm -rf previews/
+          rm -f settings.json
+          rm -rf log/
+          rm -rf __pycache__/
+          rm -rf cw2_lessons_displayer.egg-info/
+          # 仓库/CI 专用文件也不应打进包
+          rm -rf .github/
+          rm -f .gitignore .git-cliff.toml
+          echo "Removed non-packaging files"
       
       - name: Build .cwplugin package
         run: cw-plugin-pack

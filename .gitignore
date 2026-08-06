@@ -12,3 +12,7 @@ build/
 
 # 逆向研究主程序 exe 的临时目录（反汇编/解包产物）
 _research_extract/
+
+# 插件运行期配置（一经用户配置即生成，不应提交/打包）
+settings.json
+log/

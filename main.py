@@ -5,6 +5,7 @@ Class Widgets 2.0 - 今日课程显示插件 (独立全屏窗口版)
 
 import os
 import sys
+import json
 import ctypes
 import darkdetect
 from loguru import logger
@@ -22,6 +23,16 @@ UI_HEIGHT = 54
 
 # 自动关闭特殊模式功能开关
 AUTO_CLOSE_SPECIAL_MODE_ENABLED = True  # 设为 False 可禁用
+
+# 插件设置默认值（写死在源码里）。
+# 处理规则：配置文件里有相应配置项 → 加载配置值；没有 → 加载默认值。
+# "恢复默认设置"= 清空/删除配置文件，全部回落到本默认值。
+DEFAULT_SETTINGS = {
+    "basic_placeholder": True,     # 基本页占位 Switch（暂无实际作用）
+    "special_placeholder": False,  # 特殊模式页占位 Switch（暂无实际作用）
+}
+
+SETTINGS_CONFIG_FILENAME = "settings.json"
 
 
 def _time_to_minutes(time_str: str) -> int:
@@ -42,10 +53,12 @@ class LessonsBackend(QObject):
     bgOpacityChanged = Signal()
     scaleFactorChanged = Signal()
     switchingChanged = Signal()
+    popupOpenChanged = Signal()
 
     def __init__(self, plugin):
         super().__init__()
         self.plugin = plugin
+        self._popup_open = False
         self._lessons = []
         self._display_items = []
         self._current_lesson_id = ""
@@ -445,10 +458,15 @@ class LessonsBackend(QObject):
     @Slot()
     def hideWidgetMask(self):
         """请求移除窗口 mask（引用计数：右键菜单 / 按钮文本提示可同时占用）。
-        仅正常模式真正操作 mask；所有模式都累计引用计数，避免相互覆盖。"""
+
+        仅正常模式有意义（特殊模式窗口为纯色全屏，无 mask），非正常模式直接忽略，
+        避免特殊窗口的 tooltip/菜单累计引用计数后随窗口销毁而泄漏。
+        """
+        if self.mode != "normal":
+            return
         try:
             self._mask_hide_refs += 1
-            if self.plugin.window and self.mode == "normal":
+            if self.plugin.window:
                 self.plugin._mask_enabled = False
                 self.plugin.window.setMask(QRegion())
         except Exception as e:
@@ -457,13 +475,53 @@ class LessonsBackend(QObject):
     @Slot()
     def showWidgetMask(self):
         """释放 mask 占用；引用计数归零且处于正常模式时恢复窗口 mask。"""
+        if self.mode != "normal":
+            return
         try:
             self._mask_hide_refs = max(0, self._mask_hide_refs - 1)
-            if self.plugin.window and self.mode == "normal" and self._mask_hide_refs == 0:
+            if self.plugin.window and self._mask_hide_refs == 0:
                 self.plugin._mask_enabled = True
                 self.plugin._update_mask()
         except Exception as e:
             plugin_logger.debug(f"恢复 mask 失败: {e}")
+
+    @Slot()
+    def holdTopmost(self):
+        """弹出浮层（右键菜单 / 设置页）时强制插件所有窗口置顶（引用计数，可叠加）。
+
+        模仿特殊模式：置顶走 SetWindowPos(HWND_TOPMOST) + raise_ + requestActivate
+        + _make_foreground_window（设系统前台）。同时把 popupOpen 置 True，让主窗口
+        QML flags 绑定在浮层打开时也带上 WindowStaysOnTopHint（与特殊模式一致）。
+        """
+        try:
+            self.plugin._topmost_refs += 1
+            self._set_popup_open(True)
+            self.plugin._apply_topmost_all(True)
+        except Exception as e:
+            plugin_logger.debug(f"置顶失败: {e}")
+
+    @Slot()
+    def releaseTopmost(self):
+        """浮层关闭后释放置顶占用；引用计数归零且处于正常模式时移除置顶。
+        特殊模式窗口本就需保持置顶，不在此处移除。"""
+        try:
+            self.plugin._topmost_refs = max(0, self.plugin._topmost_refs - 1)
+            if self.plugin._topmost_refs == 0:
+                self._set_popup_open(False)
+                self.plugin._apply_topmost_all(False)
+        except Exception as e:
+            plugin_logger.debug(f"恢复窗口层级失败: {e}")
+
+    def _set_popup_open(self, value):
+        """同步 popupOpen（浮层是否打开），供 QML flags 绑定判断是否置顶"""
+        value = bool(value)
+        if value != self._popup_open:
+            self._popup_open = value
+            self.popupOpenChanged.emit()
+
+    @Property(bool, notify=popupOpenChanged)
+    def popupOpen(self):
+        return self._popup_open
 
     @Slot(result=bool)
     def isUiAboveTaskbar(self):
@@ -548,6 +606,77 @@ class LessonsBackend(QObject):
         return self._switching
 
 
+class SettingsBackend(QObject):
+    """插件设置后端：设置项默认值写死在源码，配置文件按需生成。
+
+    - 配置文件路径：<plugin PATH>/settings.json，初始（打包时）不包含。
+    - 一经用户配置（setBool），即生成/更新配置文件。
+    - 读取规则：配置文件有该键 → 用配置值；没有 → 用 DEFAULT_SETTINGS 默认值。
+    - "恢复默认设置"（resetDefaults）= 删除配置文件，全部回落到默认值。
+    """
+
+    settingsChanged = Signal()
+
+    def __init__(self, plugin):
+        super().__init__()
+        self.plugin = plugin
+        self._config_path = os.path.join(plugin.PATH, SETTINGS_CONFIG_FILENAME)
+        self._config = self._load_config()
+
+    def _load_config(self):
+        """读取配置文件；不存在/损坏时返回空 dict（全部用默认值）"""
+        try:
+            if os.path.exists(self._config_path):
+                with open(self._config_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+        except Exception as e:
+            plugin_logger.debug(f"读取设置失败（使用默认值）: {e}")
+        return {}
+
+    def _save_config(self):
+        """写入配置文件（首次调用即生成配置文件）"""
+        try:
+            with open(self._config_path, "w", encoding="utf-8") as f:
+                json.dump(self._config, f, ensure_ascii=False, indent=2)
+            plugin_logger.debug(f"设置已保存: {self._config_path}")
+        except Exception as e:
+            plugin_logger.debug(f"保存设置失败: {e}")
+
+    @Slot(str, result=bool)
+    def getBool(self, key):
+        """读取设置：配置文件有该键用配置值，否则用源码默认值"""
+        return self._config.get(key, DEFAULT_SETTINGS.get(key, False))
+
+    @Slot(str, bool)
+    def setBool(self, key, value):
+        """写入设置项（自动保存，首次写入生成配置文件）"""
+        value = bool(value)
+        if self._config.get(key) == value:
+            return
+        self._config[key] = value
+        self._save_config()
+        self.settingsChanged.emit()
+
+    @Slot()
+    def resetDefaults(self):
+        """恢复默认设置：删除配置文件，全部回落到源码默认值"""
+        try:
+            if os.path.exists(self._config_path):
+                os.remove(self._config_path)
+                plugin_logger.info(f"已删除配置文件（恢复默认设置）: {self._config_path}")
+        except Exception as e:
+            plugin_logger.debug(f"删除配置文件失败: {e}")
+        self._config = {}
+        self.settingsChanged.emit()
+
+    @Property(bool, notify=settingsChanged)
+    def hasConfig(self):
+        """是否已生成配置文件（用于界面提示当前是否使用默认值）"""
+        return os.path.exists(self._config_path)
+
+
 class Plugin(CW2Plugin):
     def __init__(self, api):
         super().__init__(api)
@@ -565,6 +694,9 @@ class Plugin(CW2Plugin):
         self._scroll_timer = None
         self._configs = None
         self._mask_enabled = True
+        self.settings_backend = None
+        # 弹出浮层（右键菜单/设置页）置顶引用计数：>0 时所有插件窗口持续置顶
+        self._topmost_refs = 0
 
         # 启动淡入：等待宽度变化或超时（见 _on_ui_ready）
         self._ui_fade_timeout_timer = None
@@ -637,8 +769,12 @@ class Plugin(CW2Plugin):
         self.backend.positionChanged.connect(self._update_mask)
         self.backend.widthChanged.connect(self._update_mask)
 
+        # 设置后端：默认值写死在源码，配置按需生成 settings.json
+        self.settings_backend = SettingsBackend(self)
+
         self.engine = QQmlApplicationEngine()
         self.engine.rootContext().setContextProperty("lessonsBackend", self.backend)
+        self.engine.rootContext().setContextProperty("settingsBackend", self.settings_backend)
 
         qml_path = os.path.join(self.PATH, "qml", "FullScreenWindow.qml")
         plugin_logger.debug(f"加载 QML 文件: {qml_path}")
@@ -690,6 +826,9 @@ class Plugin(CW2Plugin):
 
     def _sync_window_layer(self):
         if not self.window or not self.backend:
+            return
+        # 有弹出浮层（右键菜单/设置页）打开：跳过层级同步（避免 lower 掉已置顶的窗口）
+        if self._topmost_refs > 0:
             return
         if self.backend.mode != "normal":
             # 特殊模式下持续强制置顶，防止窗口层级被重置导致任务栏露出
@@ -928,7 +1067,17 @@ class Plugin(CW2Plugin):
                 self._cursor_hidden = False
 
     def _enable_mask_and_update(self):
-        """延迟后恢复 mask 更新"""
+        """延迟后恢复 mask 更新。
+
+        仅在 mask 引用计数归零（无 tooltip/菜单占用）且处于正常模式时恢复，
+        避免恢复 mask 时把仍打开的浮层裁掉，或与泄漏的引用计数冲突。
+        """
+        if not self.backend:
+            return
+        if self.backend.mode != "normal":
+            return
+        if self.backend._mask_hide_refs > 0:
+            return
         self._mask_enabled = True
         self._update_mask()
 
@@ -1045,6 +1194,57 @@ class Plugin(CW2Plugin):
         except Exception as e:
             plugin_logger.debug(f"强制置顶失败: {e}")
 
+    def _apply_topmost_all(self, topmost):
+        """对插件所有 UI 窗口（主窗口 + 特殊模式窗口）应用/移除置顶。
+
+        模仿特殊模式 _force_topmost：置顶时除了 SetWindowPos(HWND_TOPMOST) 外，
+        还必须 _make_foreground_window 设为系统前台窗口（否则其它前台窗口仍可压住它）。
+        直接用 Windows API 改窗口标志，不重建窗口/不重绘 UI。
+        topmost=True：HWND_TOPMOST + WindowStaysOnTopHint + raise + 设系统前台。
+        topmost=False：仅正常模式移除置顶（特殊模式窗口本就需保持置顶）。
+        """
+        if sys.platform != 'win32':
+            return
+        wins = []
+        if self.window:
+            wins.append(self.window)
+        if self.special_window and self.special_window.isVisible():
+            wins.append(self.special_window)
+        if not wins:
+            return
+        for win in wins:
+            try:
+                if topmost:
+                    if not (win.flags() & Qt.WindowStaysOnTopHint):
+                        win.setFlag(Qt.WindowStaysOnTopHint, True)
+                    hwnd = int(win.winId())
+                    HWND_TOPMOST = -1
+                    SWP_NOMOVE = 0x0002
+                    SWP_NOSIZE = 0x0001
+                    # 模仿特殊模式 _on_mode_changed：不用 SWP_NOACTIVATE（需激活窗口）
+                    ctypes.windll.user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                                                      SWP_NOMOVE | SWP_NOSIZE)
+                    win.raise_()
+                    win.requestActivate()
+                    # 关键：模仿特殊模式，设为系统前台窗口（重新取 winId，绕过前台锁定）
+                    self._make_foreground_window(int(win.winId()))
+                else:
+                    # 仅正常模式移除；特殊模式窗口需保持置顶
+                    if self.backend and self.backend.mode != "normal":
+                        continue
+                    if win is not self.window:
+                        continue  # 只处理主窗口（特殊窗口保持置顶）
+                    if win.flags() & Qt.WindowStaysOnTopHint:
+                        win.setFlag(Qt.WindowStaysOnTopHint, False)
+                    hwnd = int(win.winId())
+                    HWND_NOTOPMOST = -2
+                    SWP_NOMOVE = 0x0002
+                    SWP_NOSIZE = 0x0001
+                    ctypes.windll.user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                                                      SWP_NOMOVE | SWP_NOSIZE)
+            except Exception as e:
+                plugin_logger.debug(f"应用置顶失败: {e}")
+
     def _prepare_special_window(self):
         """按钮按下时即开始创建专用全屏窗口（隐藏，暂不显示）
 
@@ -1060,6 +1260,8 @@ class Plugin(CW2Plugin):
             self.backend.set_switching(True)
             engine = QQmlApplicationEngine()
             engine.rootContext().setContextProperty("lessonsBackend", self.backend)
+            if self.settings_backend:
+                engine.rootContext().setContextProperty("settingsBackend", self.settings_backend)
             # 复制主引擎的导入路径（保证 RinUI 等可用）
             try:
                 for p in self.engine.importPathList():
@@ -1135,6 +1337,12 @@ class Plugin(CW2Plugin):
         if mode == "normal":
             # 销毁特殊模式专用窗口并恢复主窗口显示
             self._destroy_special_window()
+            # 关键：特殊模式窗口销毁时，其内 tooltip/菜单可能未配对释放 mask 引用
+            # 计数（如鼠标悬停按钮时 tooltip 正显示、窗口被销毁导致 showWidgetMask 永不
+            # 调用），会污染 _mask_hide_refs 导致退出后 mask 永不恢复。切换回正常模式时
+            # 清零引用计数，重建干净的 mask 状态。
+            if self.backend:
+                self.backend._mask_hide_refs = 0
             if self.window:
                 self.window.show()
             self.window.setMask(QRegion())
@@ -1156,6 +1364,9 @@ class Plugin(CW2Plugin):
                     plugin_logger.debug(f"移除系统置顶失败: {e}")
             QTimer.singleShot(400, self._enable_mask_and_update)
         else:
+            # 进入特殊模式：特殊窗口为纯色全屏无 mask，清零残留的引用计数
+            if self.backend:
+                self.backend._mask_hide_refs = 0
             self.window.setMask(QRegion())
             self._mask_enabled = True
             self.window.setFlag(Qt.WindowStaysOnTopHint, True)

@@ -14,6 +14,9 @@ import RinUI
 Menu {
     id: root
 
+    // 设置项被点击：由宿主窗口决定打开设置对话框（各窗口自行连接）
+    signal settingsRequested()
+
     position: Position.None  // 手动定位到鼠标位置，不跳到父项下方
 
     // 打开动画：与主程序小组件右键菜单一致（从上至下边平移边渐变）。
@@ -56,7 +59,9 @@ Menu {
         text: qsTr("设置")
         icon.name: "ic_fluent_settings_20_regular"
         onTriggered: {
-            // 设置：暂时不做信号传递
+            // 先关闭菜单（避免 Popup 浮在设置对话框上方），再通知宿主打开设置
+            root.close()
+            root.settingsRequested()
         }
     }
 
@@ -116,18 +121,16 @@ Menu {
 
         root.x = targetX
         root.y = targetY
-        // 打开前移除 mask：使打开动画（平移+渐变）在无 mask 的窗口上全程可见
+        // 打开前移除 mask：使打开动画（平移+渐变）在无 mask 的窗口上全程可见；
+        // 同时强制所有插件窗口置顶（宿主窗口 winId 早已存在，open 前置顶即可生效）
         lessonsBackend.hideWidgetMask()
+        lessonsBackend.holdTopmost()
         root.open()
     }
 
-    // 菜单打开：通知后端移除窗口 mask（幂等，openAt 中 open 前已调用）
-    onOpened: {
-        lessonsBackend.hideWidgetMask()
-    }
-
-    // 菜单关闭：通知后端恢复窗口 mask，恢复正常胶囊显示
+    // 菜单关闭：通知后端恢复窗口 mask，恢复正常胶囊显示；释放置顶
     onClosed: {
         lessonsBackend.showWidgetMask()
+        lessonsBackend.releaseTopmost()
     }
 }

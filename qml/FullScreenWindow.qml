@@ -8,10 +8,12 @@ import QtQuick.Window 2.15
 Window {
     id: root
     visible: false
-    // flags 绑定到模式，特殊模式时置顶
+    // flags 绑定到模式与浮层：特殊模式或右键菜单/设置页弹出时置顶。
+    // （模仿特殊模式：QML 层 flags 直接带 WindowStaysOnTopHint，窗口创建/显示即置顶，
+    // 比 Python 运行时 setFlag 更可靠。）
     flags: {
         var baseFlags = Qt.FramelessWindowHint | Qt.Tool;
-        if (lessonsBackend.mode !== "normal") {
+        if (lessonsBackend.mode !== "normal" || lessonsBackend.popupOpen) {
             return baseFlags | Qt.WindowStaysOnTopHint;
         } else {
             return baseFlags;
@@ -126,6 +128,7 @@ Window {
     // 特殊模式额外提供"退出xx模式"；在鼠标位置弹出并钳制到可见区域。
     RightClickMenu {
         id: widgetMenu
+        onSettingsRequested: settingsDialog.openDialog()
     }
 
     // 右键触发 + 菜单已打开时关闭。
@@ -153,5 +156,11 @@ Window {
             }
             pressWhileOpen = false
         }
+    }
+
+    // 设置对话框（复用 RinUI Dialog，模态遮罩在 Overlay 层，天然位于最上层）：
+    // 打开时禁用 mask（否则遮罩/对话框被窗口 mask 裁剪），关闭时恢复。
+    SettingsDialog {
+        id: settingsDialog
     }
 }
