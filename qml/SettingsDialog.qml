@@ -30,18 +30,26 @@ Dialog {
     property int currentIndex: 0
 
     // 打开：一般模式 → "基本"页；特殊模式 → "特殊模式"页；禁用 mask 并强制所有窗口置顶。
-    // 注意：宿主窗口 winId 早已存在，open() 前置顶即可生效；_sync_window_layer 每秒重申兜底。
+    // 注意：宿主窗口 winId 早已存在，open() 前置顶即可生效。
+    // 每次打开都强制 Loader 重新加载页面（active 切换），避免显示上次离开时残留的
+    // 页面实例/滚动位置——即使 currentIndex 与上次相同也要重新创建页面。
     function openDialog() {
         currentIndex = (lessonsBackend.mode === "normal") ? 0 : 1
+        sidebarList.currentIndex = currentIndex  // 同步侧边栏高亮（不能依赖绑定，见 sidebarList 注释）
+        // 强制重新加载当前 source 的页面（销毁旧实例并重建，source 绑定保持不变）
+        pageLoader.active = false
+        pageLoader.active = true
         lessonsBackend.hideWidgetMask()
         lessonsBackend.holdTopmost()
         root.open()
     }
 
-    // 关闭后恢复窗口 mask 与窗口层级
+    // 关闭后恢复窗口 mask 与窗口层级，并重置页面索引（下次打开按模式重新选择）
     onClosed: {
         lessonsBackend.showWidgetMask()
         lessonsBackend.releaseTopmost()
+        currentIndex = 0
+        sidebarList.currentIndex = 0  // 同步侧边栏高亮
     }
 
     contentItem: ColumnLayout {
@@ -68,11 +76,15 @@ Dialog {
 
                 ListView {
                     id: sidebarList
+                    objectName: "sidebarList"
                     clip: true
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     model: root.pages
-                    currentIndex: root.currentIndex
+                    // 注意：不能用 currentIndex: root.currentIndex 绑定——RinUI ListViewDelegate
+                    // 的 onClicked 内部会直接赋值 ListView.view.currentIndex，这会解除该绑定，
+                    // 导致侧边栏高亮固定在上次点击的位置、不再跟随 root.currentIndex。
+                    // 因此改为在 openDialog()/onClosed()/delegate onClicked 中手动同步。
                     delegate: ListViewDelegate {
                         Layout.fillWidth: true
                         leftArea: Icon {
@@ -88,7 +100,10 @@ Dialog {
                                 Layout.rightMargin: 12
                             }
                         ]
-                        onClicked: root.currentIndex = index
+                        onClicked: {
+                            root.currentIndex = index
+                            sidebarList.currentIndex = index  // ListViewDelegate 内部已设置，此处显式保持与 root 一致
+                        }
                     }
                 }
             }
@@ -107,6 +122,7 @@ Dialog {
 
                     Loader {
                         id: pageLoader
+                        objectName: "pageLoader"
                         width: parent.width
                         source: root.pages[root.currentIndex].source
                     }

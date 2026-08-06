@@ -17,6 +17,17 @@ ColumnLayout {
 
     SettingCard {
         Layout.fillWidth: true
+        icon.name: "ic_fluent_play_20_regular"
+        title: "动画性能优化"
+        description: "位置平移等动画播放期间暂时禁用窗口遮罩，动画结束后恢复，提升动画流畅度"
+
+        SettingsSwitch {
+            settingKey: "animation_performance"
+        }
+    }
+
+    SettingCard {
+        Layout.fillWidth: true
         icon.name: "ic_fluent_arrow_reset_20_regular"
         title: "恢复默认设置"
         description: "清空本插件的配置文件，所有设置恢复为默认值"

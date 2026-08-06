@@ -59,8 +59,24 @@ Window {
         opacity: lessonsBackend.uiOpacity  // 透明度绑定后端属性，实现淡入淡出
         z: 1
 
-        Behavior on x { NumberAnimation { duration: 400; easing.type: Easing.OutQuint } }
-        Behavior on y { NumberAnimation { duration: 400; easing.type: Easing.OutQuint } }
+        Behavior on x {
+            id: xBehavior
+            NumberAnimation {
+                id: xAnim
+                duration: 400
+                easing.type: Easing.OutQuint
+                onStopped: root.onTranslateAnimStopped()
+            }
+        }
+        Behavior on y {
+            id: yBehavior
+            NumberAnimation {
+                id: yAnim
+                duration: 400
+                easing.type: Easing.OutQuint
+                onStopped: root.onTranslateAnimStopped()
+            }
+        }
         Behavior on width { NumberAnimation { duration: 400; easing.type: Easing.OutQuint } }
         Behavior on height { NumberAnimation { duration: 400; easing.type: Easing.OutQuint } }
         Behavior on opacity { NumberAnimation { duration: 400; easing.type: Easing.OutCubic } }
@@ -75,6 +91,14 @@ Window {
                 root.uiReady()
             }
         }
+    }
+
+    // 动画性能优化：纯平移动画（x/y）结束时通知后端恢复 mask。
+    // x/y 动画可能同时/先后停止，后端用引用计数保证只恢复一次。
+    // 宽度变化触发的 x/y 动画也会走到这里，但后端 _anim_optimize_active 为
+    // False 时 endTranslateAnim 直接返回，不会误恢复 mask。
+    function onTranslateAnimStopped() {
+        lessonsBackend.endTranslateAnim()
     }
 
     function checkLoader() {

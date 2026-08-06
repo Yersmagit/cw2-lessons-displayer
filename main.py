@@ -30,6 +30,7 @@ AUTO_CLOSE_SPECIAL_MODE_ENABLED = True  # 设为 False 可禁用
 DEFAULT_SETTINGS = {
     "basic_placeholder": True,     # 基本页占位 Switch（暂无实际作用）
     "special_placeholder": False,  # 特殊模式页占位 Switch（暂无实际作用）
+    "animation_performance": True, # 动画性能优化（高级设置，默认启用）
 }
 
 SETTINGS_CONFIG_FILENAME = "settings.json"
@@ -86,6 +87,12 @@ class LessonsBackend(QObject):
 
         # 移除窗口 mask 的引用计数（右键菜单/文本提示可同时占用，归零才恢复）
         self._mask_hide_refs = 0
+
+        # 动画性能优化：纯平移动画期间临时禁用 mask（动画结束恢复）
+        self._anim_optimize_active = False
+        self._anim_optimize_timer = QTimer()
+        self._anim_optimize_timer.setSingleShot(True)
+        self._anim_optimize_timer.timeout.connect(self._on_anim_optimize_timeout)
 
         # 初始化字体
         self._update_font()
@@ -356,7 +363,13 @@ class LessonsBackend(QObject):
             self.widthChanged.emit()
             self.update_position()
 
-    def update_position(self):
+    def update_position(self, trigger_anim_optimize=False):
+        """根据配置计算并更新 UI 位置。
+
+        trigger_anim_optimize=True 表示本次是纯平移（位置/隐藏变化、宽度不变），
+        动画性能优化启用时在平移动画期间临时禁用 mask（动画结束恢复）；
+        宽度变化（set_ui_width）与初始定位不触发（mask 正常更新）。
+        """
         try:
             configs = self.plugin._configs
             prefs = configs.preferences
@@ -365,6 +378,8 @@ class LessonsBackend(QObject):
             offset_x = prefs.widgets_offset_x
             offset_y = prefs.widgets_offset_y
             hide = interactions.hide.state
+
+            old_x, old_y = self._ui_x, self._ui_y
 
             scale_factor = prefs.scale_factor if hasattr(prefs, 'scale_factor') else 1.0
             mini_mode = prefs.mini_mode if hasattr(prefs, 'mini_mode') else False
@@ -414,6 +429,10 @@ class LessonsBackend(QObject):
             self._ui_x = int(x)
             self._ui_y = int(y)
             self.positionChanged.emit()
+
+            # 动画性能优化：纯平移（位置变化、宽度不变）开始时临时禁用 mask
+            if trigger_anim_optimize and (self._ui_x != old_x or self._ui_y != old_y):
+                self._maybe_begin_translate_anim()
 
             new_opacity = 0 if hide else 1
             self.set_ui_opacity(new_opacity)
@@ -484,6 +503,62 @@ class LessonsBackend(QObject):
                 self.plugin._update_mask()
         except Exception as e:
             plugin_logger.debug(f"恢复 mask 失败: {e}")
+
+    def _maybe_begin_translate_anim(self):
+        """动画性能优化：纯平移动画开始 → 临时禁用 mask。
+
+        仅当"动画性能优化"设置启用（默认启用）且处于正常模式时生效。
+        禁用期间复用 _mask_hide_refs 引用计数（+1），确保与右键菜单/文本提示
+        等 mask 占用叠加时互不干扰、归零才恢复。
+        """
+        try:
+            enabled = self.plugin.settings_backend.getBool("animation_performance")
+        except Exception:
+            enabled = True
+        if not enabled:
+            return
+        if self.mode != "normal":
+            return
+        if self._anim_optimize_active:
+            return
+        self._anim_optimize_active = True
+        self._mask_hide_refs += 1
+        try:
+            if self.plugin.window:
+                self.plugin._mask_enabled = False
+                self.plugin.window.setMask(QRegion())
+        except Exception as e:
+            plugin_logger.debug(f"禁用 mask（动画优化）失败: {e}")
+        # 兜底：QML 动画结束信号丢失时强制恢复，防止 mask 永久性失效
+        self._anim_optimize_timer.start(700)
+
+    @Slot()
+    def endTranslateAnim(self):
+        """动画性能优化：纯平移动画结束 → 恢复 mask（引用计数归零时）。"""
+        if not self._anim_optimize_active:
+            return
+        self._anim_optimize_active = False
+        self._anim_optimize_timer.stop()
+        try:
+            self._mask_hide_refs = max(0, self._mask_hide_refs - 1)
+            if self.plugin.window and self._mask_hide_refs == 0:
+                self.plugin._mask_enabled = True
+                self.plugin._update_mask()
+        except Exception as e:
+            plugin_logger.debug(f"恢复 mask（动画优化）失败: {e}")
+
+    def _on_anim_optimize_timeout(self):
+        """兜底：动画结束信号未触发时强制结束动画优化并恢复 mask。"""
+        if not self._anim_optimize_active:
+            return
+        self._anim_optimize_active = False
+        try:
+            self._mask_hide_refs = max(0, self._mask_hide_refs - 1)
+            if self.plugin.window and self._mask_hide_refs == 0:
+                self.plugin._mask_enabled = True
+                self.plugin._update_mask()
+        except Exception as e:
+            plugin_logger.debug(f"兜底恢复 mask 失败: {e}")
 
     @Slot()
     def holdTopmost(self):
@@ -813,7 +888,8 @@ class Plugin(CW2Plugin):
     def _on_config_changed(self):
         plugin_logger.debug("配置变化，更新位置、背景不透明度和字体")
         if self.backend:
-            self.backend.update_position()
+            # 纯平移（位置/隐藏变化，宽度不变）：动画性能优化启用时动画期间临时禁用 mask
+            self.backend.update_position(trigger_anim_optimize=True)
             self.backend._update_font()
             self.backend._update_bg_opacity()
             self.backend._update_scale_factor()
@@ -1077,6 +1153,8 @@ class Plugin(CW2Plugin):
         if self.backend.mode != "normal":
             return
         if self.backend._mask_hide_refs > 0:
+            return
+        if self.backend._anim_optimize_active:
             return
         self._mask_enabled = True
         self._update_mask()
@@ -1343,6 +1421,9 @@ class Plugin(CW2Plugin):
             # 清零引用计数，重建干净的 mask 状态。
             if self.backend:
                 self.backend._mask_hide_refs = 0
+                # 动画优化状态也一并重置（防止残留导致 mask 不恢复）
+                self.backend._anim_optimize_active = False
+                self.backend._anim_optimize_timer.stop()
             if self.window:
                 self.window.show()
             self.window.setMask(QRegion())
@@ -1367,6 +1448,8 @@ class Plugin(CW2Plugin):
             # 进入特殊模式：特殊窗口为纯色全屏无 mask，清零残留的引用计数
             if self.backend:
                 self.backend._mask_hide_refs = 0
+                self.backend._anim_optimize_active = False
+                self.backend._anim_optimize_timer.stop()
             self.window.setMask(QRegion())
             self._mask_enabled = True
             self.window.setFlag(Qt.WindowStaysOnTopHint, True)
@@ -1418,6 +1501,11 @@ class Plugin(CW2Plugin):
             try:
                 self._ui_fade_timeout_timer.stop()
                 self._ui_fade_timeout_timer.deleteLater()
+            except Exception:
+                pass
+        if self.backend:
+            try:
+                self.backend._anim_optimize_timer.stop()
             except Exception:
                 pass
         if self._configs:
