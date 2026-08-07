@@ -12,14 +12,14 @@
 
 </div>
 
-> [!IMPORTANT]
+> [!TIP]
 > 
-> 按照计划，一些功能正逐步完善，详见下方 __📦 功能 / Functions__ 板块。
+> ~~按照计划，一些功能正逐步完善。~~
+> **插件现已更新到正式版！**
 
 ## 📖 简介 / Introduction
 - 可以完全展示当日课程信息，完全杜绝抄课表。
-本插件
-适用于 [Class Widgets 2](https://github.com/rinlit-233-shiroko/class-widgets-2) 。
+本插件适用于 [Class Widgets 2](https://github.com/rinlit-233-shiroko/class-widgets-2) 。
 
 > [!TIP]
 > 
@@ -31,118 +31,78 @@
 
 
 ## 📦 功能 / Functions
-### 已有功能 / Existing Functions
-#### 基本功能 / Basic Functions
-- 软件运行时，自动显示当日课程信息。如图：
+### 主组件 / Main Widget
+- 软件运行时，自动显示当日课程信息。
   <div style="text-align: center;">
   <img src="previews/ex_default.png" alt="ex_default" style="max-width:100%; height:auto;">
   </div>
 
 - 课程信息根据当前状态自动 **高亮** 显示。
 
-  **上课** 时，**橙红色** 高亮显示正在上的课；**下课** 时，**绿色** 高亮显示下一节课。
+  **上课** 时，**橙红色** 高亮显示现在的课；**下课** 时，**绿色** 高亮显示下一节课。
 
-  下图为数学课上课时的样子：
+  例如，下图为数学课上课时的样子：
   <div style="text-align: center;">
   <img src="previews/ex_on_class.png" alt="ex_on_class" style="max-width:100%; height:auto;">
   </div>
 
-- 课程列表过长时，会 **自动** 将高亮课程滚动到胶囊形 UI 的中间偏左位置。如下图：
-  <div style="text-align: center;">
-  <img src="previews/ex_overflow.png" alt="ex_overflow" style="max-width:100%; height:auto;">
-  </div>
-
-  当然，你也可以 **手动滚动课程列表**。支持 拖拽滚动 和 鼠标滚轮滚动。
-
-  滚动条只在鼠标悬停或触控拖拽时显示。
-
-- 在自由时间超过 15 分钟的位置，会显示一个 **分割线** 来分隔课程。如下图：
+- 在当日空闲时段，会自动显示一个 **分割线** 分隔课程。
   <div style="text-align: center;">
   <img src="previews/ex_divider.png" alt="ex_divider" style="max-width:100%; height:auto;">
   </div>
 
-  *注：自由时间 指没有任何课程安排的时间段*
+  *注：需要空闲时段超过 15 分钟*
 
-#### 更多功能 / More Functions
-- <span style="display: inline-flex; align-items: center; white-space: nowrap; gap: 4px;"><span>胶囊形 UI 右侧有 <strong>白板模式</strong> 按钮</span> <img src="previews/ex_light_bottom.png" alt="ex_light_bottom" style="width:30px; height:30px; border-radius: 50%;"> <span>和 <strong>熄屏模式</strong> 按钮</span> <img src="previews/ex_dark_bottom.png" alt="ex_dark_bottom" style="width:30px; height:30px; border-radius: 50%;"></span>
+> [!TIP]
+> 
+> 课程列表支持滚动。同时，插件也会自动把重要内容滚动到左侧。
 
-  单击相应按钮可以打开相应模式。
+> [!IMPORTANT]
+> 
+> 未来，我们将在此小组件上展示更多内容。例如：明日课程、长通知、天气预警、集控相关信息等。
 
-- 白板模式或熄屏模式使用全屏纯色界面，只展示关键信息。有些类似于屏保。如下图：
+### 特殊模式 / Special Modes
+- <span style="display: inline-flex; align-items: center; white-space: nowrap; gap: 4px;"><span>小组件右侧，有 <strong>白板模式</strong> 按钮</span> <img src="previews/ex_light_bottom.png" alt="ex_light_bottom" style="width:30px; height:30px; border-radius: 50%;"> <span>和 <strong>熄屏模式</strong> 按钮</span> <img src="previews/ex_dark_bottom.png" alt="ex_dark_bottom" style="width:30px; height:30px; border-radius: 50%;"></span>
+
+  单击相应按钮以切换模式。
+
+- 在白板模式或熄屏模式，只有关键信息被展示，界面全屏纯净，类似屏保。
   <div style="text-align: center;">
   <img src="previews/ex_blackboard.png" alt="ex_blackboard" style="max-width:100%; height:auto;">
   </div>
 
-  白板模式或熄屏模式下，高亮的课程会以胶囊形 **展开**，以显示更多详细信息。如下图：
+  此时，当前课程的位置会显示更多信息。
   <div style="text-align: center;">
   <img src="previews/ex_lessons_in_blackboard.png" alt="ex_lessons_in_blackboard" style="max-width:100%; height:auto;">
   </div>
 
-- 白板模式或熄屏模式下，活动 **剩余时间** 会根据课程状态动态调整文本显示策略。
+### 设置页 / Settings
+- 插件提供设置页，这里有更多你想要的功能！
+  <div style="text-align: center;">
+  <img src="previews/ex_settings.png" alt="ex_settings" style="max-width:100%; height:auto;">
+  </div>
 
-  如在上课时，会显示 `剩 x 分钟`；下课时，显示 `x 分钟后上课`。如果剩余时间少于 1 分钟，还会显示 `剩 x 秒` 或 `x 秒后上课`。
-
-### 待开发功能 / Planned Functions
-
-以下列举了本插件的待开发功能。
-- [ ] 胶囊状 UI 跟随主程序的窗口标志和主题设置
-- [ ] 插件的自定义设置
-- [ ] 自动化展示明日课程
-
+> [!TIP]
+> 
+> 设置页打开方式：
+> 1. 在小组件形态时，直接右键/长按小组件，打开右键菜单，选择“设置”。
+> 2. 在熄屏/白板模式下，右键/长按屏幕上的任意位置，打开右键菜单，选择“设置”。
 
 ## 📥 安装 / Installation
 ### 如何安装并启用 / How to Install and Enable
 1. 下载插件包
 
-2. 在 Class Widgets 2 -> "设置" -> "插件"中导入下载好的插件包
+2. 在 Class Widgets 2 > "设置" > "插件"中导入下载好的插件包
 
-3. 在 Class Widgets 2 -> "设置" -> "插件"中启用
+3. 在 Class Widgets 2 > "设置" > "插件"中启用
 
 4. 重启软件
 
 5. 完成！
 
-## 🤔 常见问题 / FAQ
-此处列举了一些你可能关心的问题。
+## 🤔 反馈 / Feedback
 
- **Q: 为什么现在图标上有 PRE 字样？预览版是什么意思？** 
-
-> A: PRE 是 Preview 的缩写，说明本插件尚处于开发中，可能存在一些未完成的功能和一些小问题。
-> 
-> 发布预览版的目的是为了让用户提前体验和反馈，以便在正式版发布前进行改进和优化。❤️
-
-
- **Q: 正式版什么时候发布？正式版会有哪些功能？** 
-
-> A: 正式版计划在 8 月中旬发布。
-> 
-> 正式版将添加：
-> - 插件右键菜单和插件设置页。
-> - 其它一些小功能和细节优化。
-
-
- **Q: 为什么课程列表始终置底？** 
-
-> A: 这是目前的设计行为。目的是防止置顶的课程列表影响老师的窗口操作。
-> 
-> 在正式版中，我会考虑在设置中添加一个选项来允许用户自定义课程列表的窗口标志（置底或置顶）。😊
-
-
- **Q: 为什么熄屏模式或白板模式会在下课时主动关闭？** 
-
-> A: 这同样是目前的设计行为。因为不是每节课都需要使用熄屏模式或白板模式。
-> 
-> 在正式版中，会在设置中添加是否启用自动关闭的选项。
-
-
- **Q: 熄屏模式或白板模式下的倒计时字号好像有点小？** 
-
-> A: 我也注意到这个问题了。
-> 
-> 在正式版中，会在设置中添加相关的自定义选项。
-
-
-如果你有更多功能建议或遇到任何问题，欢迎在 [GitHub Issues](https://github.com/Yersmagit/cw2-lessons-displayer/issues) 中指出！
+有功能建议或遇到问题？欢迎在 [GitHub Issues](https://github.com/Yersmagit/cw2-lessons-displayer/issues) 中指出！
 
 ## 📘 其它 / Others
 ### 引用资源 / Credits
