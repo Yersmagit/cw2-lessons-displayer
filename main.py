@@ -28,9 +28,9 @@ AUTO_CLOSE_SPECIAL_MODE_ENABLED = True  # 设为 False 可禁用
 # 处理规则：配置文件里有相应配置项 → 加载配置值；没有 → 加载默认值。
 # "恢复默认设置"= 清空/删除配置文件，全部回落到本默认值。
 DEFAULT_SETTINGS = {
-    "basic_placeholder": True,     # 基本页占位 Switch（暂无实际作用）
-    "special_placeholder": False,  # 特殊模式页占位 Switch（暂无实际作用）
+    "special_placeholder": False, # 特殊模式页占位 Switch（暂无实际作用）
     "animation_performance": True, # 动画性能优化（高级设置，默认启用）
+    "widgets_layer": "follow",   # 小组件图层：跟随软件设置(follow)/始终置顶(top)/始终置底(bottom)
 }
 
 SETTINGS_CONFIG_FILENAME = "settings.json"
@@ -55,6 +55,7 @@ class LessonsBackend(QObject):
     scaleFactorChanged = Signal()
     switchingChanged = Signal()
     popupOpenChanged = Signal()
+    layerChanged = Signal()
 
     def __init__(self, plugin):
         super().__init__()
@@ -87,6 +88,10 @@ class LessonsBackend(QObject):
 
         # 移除窗口 mask 的引用计数（右键菜单/文本提示可同时占用，归零才恢复）
         self._mask_hide_refs = 0
+
+        # 小组件图层状态（由插件设置 + 主程序 widgets_layer 配置计算）
+        self._layer_topmost = False
+        self._layer_bottommost = False
 
         # 动画性能优化：纯平移动画期间临时禁用 mask（动画结束恢复）
         self._anim_optimize_active = False
@@ -609,6 +614,57 @@ class LessonsBackend(QObject):
         except Exception:
             return True
 
+    def _get_main_widgets_layer(self):
+        """读取主程序 widgets_layer 配置：top/bottom/normal（跟随软件设置用）"""
+        try:
+            return self.plugin._configs.preferences.widgets_layer
+        except Exception:
+            return "top"
+
+    def _update_layer_state(self):
+        """根据插件"小组件图层"设置 + 主程序 widgets_layer 配置计算置顶/置底状态。
+
+        - 插件设置 widgets_layer：follow(跟随软件设置)/top(始终置顶)/bottom(始终置底)
+        - follow 时跟随主程序配置：top→置顶、bottom→置底、normal→普通
+        结果通过 layerTopmost/layerBottommost 暴露给 QML flags 绑定（纯 QML flags 方案，
+        模仿主程序：WindowStaysOnTopHint / WindowStaysOnBottomHint 互斥切换）。
+        """
+        try:
+            strategy = self.plugin.settings_backend.getString("widgets_layer")
+        except Exception:
+            strategy = "follow"
+        if strategy not in ("follow", "top", "bottom"):
+            strategy = "follow"
+
+        topmost = False
+        bottommost = False
+        if strategy == "top":
+            topmost = True
+        elif strategy == "bottom":
+            bottommost = True
+        else:  # follow：跟随主程序配置
+            main_layer = self._get_main_widgets_layer()
+            if main_layer == "top":
+                topmost = True
+            elif main_layer == "bottom":
+                bottommost = True
+            # normal → 两者都 False（普通层级）
+
+        if topmost != self._layer_topmost or bottommost != self._layer_bottommost:
+            self._layer_topmost = topmost
+            self._layer_bottommost = bottommost
+            self.layerChanged.emit()
+
+    @Property(bool, notify=layerChanged)
+    def layerTopmost(self):
+        """QML flags 绑定：正常模式下是否置顶"""
+        return self._layer_topmost
+
+    @Property(bool, notify=layerChanged)
+    def layerBottommost(self):
+        """QML flags 绑定：正常模式下是否置底"""
+        return self._layer_bottommost
+
     @Property(str, notify=modeChanged)
     def mode(self):
         return self._mode
@@ -737,6 +793,21 @@ class SettingsBackend(QObject):
         self._save_config()
         self.settingsChanged.emit()
 
+    @Slot(str, result=str)
+    def getString(self, key):
+        """读取字符串设置：配置文件有该键用配置值，否则用源码默认值"""
+        return self._config.get(key, DEFAULT_SETTINGS.get(key, ""))
+
+    @Slot(str, str)
+    def setString(self, key, value):
+        """写入字符串设置项（自动保存，首次写入生成配置文件）"""
+        value = str(value)
+        if self._config.get(key) == value:
+            return
+        self._config[key] = value
+        self._save_config()
+        self.settingsChanged.emit()
+
     @Slot()
     def resetDefaults(self):
         """恢复默认设置：删除配置文件，全部回落到源码默认值"""
@@ -849,6 +920,11 @@ class Plugin(CW2Plugin):
 
         # 设置后端：默认值写死在源码，配置按需生成 settings.json
         self.settings_backend = SettingsBackend(self)
+        # 插件设置变化（如小组件图层）时刷新图层状态并驱动 QML flags 绑定
+        self.settings_backend.settingsChanged.connect(self._on_plugin_settings_changed)
+        if self.backend:
+            self.backend._update_layer_state()
+        plugin_logger.debug("已连接 settingsChanged 信号")
 
         self.engine = QQmlApplicationEngine()
         self.engine.rootContext().setContextProperty("lessonsBackend", self.backend)
@@ -896,6 +972,13 @@ class Plugin(CW2Plugin):
             self.backend._update_font()
             self.backend._update_bg_opacity()
             self.backend._update_scale_factor()
+            # 主程序 widgets_layer 配置变化（跟随软件设置）时刷新图层状态
+            self.backend._update_layer_state()
+
+    def _on_plugin_settings_changed(self):
+        """插件设置变化（小组件图层等）：刷新图层状态，驱动 QML flags 绑定重新求值"""
+        if self.backend:
+            self.backend._update_layer_state()
 
     def _start_layer_sync(self):
         self._layer_timer = QTimer()
@@ -914,27 +997,56 @@ class Plugin(CW2Plugin):
             self._force_topmost()
             return
         try:
-            main_window = self.api._app.widgets_window
-            if not main_window or not main_window.isVisible():
-                return
-
-            main_flags = main_window.flags()
-            our_flags = self.window.flags()
-
-            new_flags = our_flags & ~(Qt.WindowStaysOnTopHint | Qt.WindowStaysOnBottomHint)
-
-            if main_flags & Qt.WindowStaysOnTopHint:
-                pass
-            elif main_flags & Qt.WindowStaysOnBottomHint:
-                new_flags |= Qt.WindowStaysOnBottomHint
-
-            if new_flags != our_flags:
-                self.window.setFlags(new_flags)
-                plugin_logger.debug(f"窗口标志已更新: {new_flags}")
-
-            self.window.lower()
+            # 每次同步重新计算图层状态（follow 时跟随主程序 widgets_layer 配置）
+            self.backend._update_layer_state()
+            # 统一应用图层：置顶/置底/普通三态互斥（flags + Win32 SetWindowPos）
+            self._apply_layer_flags()
         except Exception as e:
             plugin_logger.debug(f"同步窗口层级失败: {e}")
+
+    def _apply_layer_flags(self):
+        """按图层策略设置主窗口 Qt flags + Win32 层级（置顶/置底/普通互斥，可靠）。
+
+        - layerTopmost：WindowStaysOnTopHint + SetWindowPos(HWND_TOPMOST) + raise_
+        - layerBottommost：WindowStaysOnBottomHint + SetWindowPos(HWND_NOTOPMOST) + lower
+        - 普通：清除 top/bottom hint + SetWindowPos(HWND_NOTOPMOST)
+        与右键菜单/设置弹出（_apply_topmost_all）同一套 Win32 置顶方式（仅默认置顶
+        用 SWP_NOACTIVATE 不抢焦点）。Python 统一互斥控制，避免 QML flags 绑定
+        与 setFlag 冲突导致置顶/置底切换状态残留。
+        """
+        if not self.window or not self.backend:
+            return
+        try:
+            topmost = self.backend.layerTopmost
+            bottommost = self.backend.layerBottommost
+
+            # Qt flags：互斥设置 top/bottom hint
+            flags = self.window.flags()
+            new_flags = flags & ~(Qt.WindowStaysOnTopHint | Qt.WindowStaysOnBottomHint)
+            if topmost:
+                new_flags |= Qt.WindowStaysOnTopHint
+            elif bottommost:
+                new_flags |= Qt.WindowStaysOnBottomHint
+            if new_flags != flags:
+                self.window.setFlags(new_flags)
+
+            if sys.platform != 'win32':
+                return
+            hwnd = int(self.window.winId())
+            SWP_NOMOVE = 0x0002
+            SWP_NOSIZE = 0x0001
+            SWP_NOACTIVATE = 0x0010
+            if topmost:
+                ctypes.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0,
+                                                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
+                self.window.raise_()
+            else:
+                ctypes.windll.user32.SetWindowPos(hwnd, -2, 0, 0, 0, 0,
+                                                  SWP_NOMOVE | SWP_NOSIZE)
+                if bottommost:
+                    self.window.lower()
+        except Exception as e:
+            plugin_logger.debug(f"应用图层失败: {e}")
 
     def _start_theme_polling(self):
         self._theme_timer = QTimer()
@@ -1315,6 +1427,10 @@ class Plugin(CW2Plugin):
                         continue
                     if win is not self.window:
                         continue  # 只处理主窗口（特殊窗口保持置顶）
+                    # 图层策略为"始终置顶"（layerTopmost）时保持置顶，
+                    # 浮层关闭后不得移除（QML flags 绑定与 _sync_window_layer 兜底都依赖它）
+                    if self.backend and self.backend.layerTopmost:
+                        continue
                     if win.flags() & Qt.WindowStaysOnTopHint:
                         win.setFlag(Qt.WindowStaysOnTopHint, False)
                     hwnd = int(win.winId())
@@ -1431,21 +1547,15 @@ class Plugin(CW2Plugin):
                 self.window.show()
             self.window.setMask(QRegion())
             self._mask_enabled = False
-            self.window.setFlag(Qt.WindowStaysOnTopHint, False)
+            # 退出特殊模式：统一应用图层策略（置顶/置底/普通互斥），
+            # 由 _apply_layer_flags 设置 flags + SetWindowPos，避免手动 setFlag 残留。
+            if self.backend:
+                self.backend._update_layer_state()
+            self._apply_layer_flags()
             if self._cursor_hidden:
                 self.window.setCursor(Qt.ArrowCursor)
                 self._cursor_hidden = False
             self._cursor_timer.stop()
-            if sys.platform == 'win32':
-                try:
-                    hwnd = int(self.window.winId())
-                    HWND_NOTOPMOST = -2
-                    SWP_NOMOVE = 0x0002
-                    SWP_NOSIZE = 0x0001
-                    ctypes.windll.user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-                                                      SWP_NOMOVE | SWP_NOSIZE)
-                except Exception as e:
-                    plugin_logger.debug(f"移除系统置顶失败: {e}")
             QTimer.singleShot(400, self._enable_mask_and_update)
         else:
             # 进入特殊模式：特殊窗口为纯色全屏无 mask，清零残留的引用计数
@@ -1514,6 +1624,11 @@ class Plugin(CW2Plugin):
         if self._configs:
             try:
                 self._configs.configChanged.disconnect(self._on_config_changed)
+            except:
+                pass
+        if self.settings_backend:
+            try:
+                self.settings_backend.settingsChanged.disconnect(self._on_plugin_settings_changed)
             except:
                 pass
         if self._layer_timer:

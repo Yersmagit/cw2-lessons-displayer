@@ -11,6 +11,9 @@ Window {
     // flags 绑定到模式与浮层：特殊模式或右键菜单/设置页弹出时置顶。
     // （模仿特殊模式：QML 层 flags 直接带 WindowStaysOnTopHint，窗口创建/显示即置顶，
     // 比 Python 运行时 setFlag 更可靠。）
+    // ⚠️ 小组件图层（置顶/置底）不在此绑定——由 Python `_apply_layer_flags()` 统一互斥
+    // 控制（WindowStaysOnTopHint/WindowStaysOnBottomHint + SetWindowPos），避免 QML 绑定
+    // 重新求值时覆盖/残留 top/bottom hint 导致置顶置底切换不可靠。
     flags: {
         var baseFlags = Qt.FramelessWindowHint | Qt.Tool;
         if (lessonsBackend.mode !== "normal" || lessonsBackend.popupOpen) {
