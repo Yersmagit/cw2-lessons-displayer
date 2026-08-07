@@ -64,7 +64,7 @@ ColumnLayout {
 
                 SpinBox {
                     from: 0
-                    to: 60
+                    to: 1000
                     stepSize: 1
                     editable: true
                     // 与主程序一致：仅用户交互（focus）时写回
