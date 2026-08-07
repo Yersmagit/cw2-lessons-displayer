@@ -21,16 +21,16 @@ plugin_logger = logger.bind(plugin="lessons-displayer")
 DEFAULT_UI_WIDTH = 100
 UI_HEIGHT = 54
 
-# 自动关闭特殊模式功能开关
-AUTO_CLOSE_SPECIAL_MODE_ENABLED = True  # 设为 False 可禁用
-
 # 插件设置默认值（写死在源码里）。
 # 处理规则：配置文件里有相应配置项 → 加载配置值；没有 → 加载默认值。
 # "恢复默认设置"= 清空/删除配置文件，全部回落到本默认值。
 DEFAULT_SETTINGS = {
-    "special_placeholder": False, # 特殊模式页占位 Switch（暂无实际作用）
     "animation_performance": True, # 动画性能优化（高级设置，默认启用）
     "widgets_layer": "follow",   # 小组件图层：跟随软件设置(follow)/始终置顶(top)/始终置底(bottom)
+    "countdown_style": "default", # 倒计时样式：默认字号(default)/大字号(large)
+    "auto_close_after_class": True, # 下课后自动关闭特殊模式
+    "auto_close_delay": 3,       # 下课后自动关闭的延迟时间数值
+    "auto_close_unit": "min",    # 延迟时间单位：min(分)/sec(秒)
 }
 
 SETTINGS_CONFIG_FILENAME = "settings.json"
@@ -56,6 +56,8 @@ class LessonsBackend(QObject):
     switchingChanged = Signal()
     popupOpenChanged = Signal()
     layerChanged = Signal()
+    countdownStyleChanged = Signal()
+    remainingTextChanged = Signal()
 
     def __init__(self, plugin):
         super().__init__()
@@ -92,6 +94,10 @@ class LessonsBackend(QObject):
         # 小组件图层状态（由插件设置 + 主程序 widgets_layer 配置计算）
         self._layer_topmost = False
         self._layer_bottommost = False
+
+        # 倒计时样式（特殊模式设置：默认字号/大字号）
+        self._countdown_style = "default"
+        self._update_countdown_style()
 
         # 动画性能优化：纯平移动画期间临时禁用 mask（动画结束恢复）
         self._anim_optimize_active = False
@@ -272,14 +278,39 @@ class LessonsBackend(QObject):
         self._update_current_icon_and_remaining()
         self._check_auto_close()
 
+    def _get_auto_close_delay_ms(self):
+        """读取"下课后自动关闭"延迟时间并转换为毫秒（数值 × 单位）。"""
+        try:
+            delay = self.plugin.settings_backend.getInt("auto_close_delay")
+        except Exception:
+            delay = 3
+        if delay < 0:
+            delay = 0
+        try:
+            unit = self.plugin.settings_backend.getString("auto_close_unit")
+        except Exception:
+            unit = "min"
+        if unit == "sec":
+            return delay * 1000
+        return delay * 60 * 1000  # 默认分
+
     def _check_auto_close(self):
-        """检查是否满足自动关闭特殊模式的条件"""
+        """检查是否满足自动关闭特殊模式的条件（受"下课后自动关闭"设置控制）。"""
+        try:
+            enabled = self.plugin.settings_backend.getBool("auto_close_after_class")
+        except Exception:
+            enabled = True
+        if not enabled:
+            # 开关关闭：不自动关闭
+            self._in_auto_close_status = False
+            self._auto_close_timer.stop()
+            return
         current_status = self.plugin.api.runtime.current_status
         is_auto_close_status = current_status in ("break", "activity", "free")
         if is_auto_close_status:
             if not self._in_auto_close_status:
                 self._in_auto_close_status = True
-                self._auto_close_timer.start(180000)
+                self._auto_close_timer.start(self._get_auto_close_delay_ms())
         else:
             if self._in_auto_close_status:
                 self._in_auto_close_status = False
@@ -287,9 +318,21 @@ class LessonsBackend(QObject):
 
     def _on_auto_close_timeout(self):
         """自动关闭超时处理"""
-        if self._mode != "normal" and AUTO_CLOSE_SPECIAL_MODE_ENABLED:
+        try:
+            enabled = self.plugin.settings_backend.getBool("auto_close_after_class")
+        except Exception:
+            enabled = True
+        if self._mode != "normal" and enabled:
             self.exitSpecialMode()
-            plugin_logger.info("自动关闭特殊模式：课间/活动持续180秒")
+            delay_ms = self._get_auto_close_delay_ms()
+            plugin_logger.info(f"自动关闭特殊模式：课间/活动持续 {delay_ms // 1000} 秒")
+
+    def _set_remaining_text(self, text):
+        """设置剩余时间文本；变化时发 remainingTextChanged（供 QML 更新），
+        避免依赖 lessonsUpdated（其在文本更新前发出，导致设置变化时字号与文本不同步）。"""
+        if text != self._current_remaining_text:
+            self._current_remaining_text = text
+            self.remainingTextChanged.emit()
 
     def _update_current_icon_and_remaining(self):
         """更新当前活动的图标和剩余时间文本"""
@@ -337,25 +380,41 @@ class LessonsBackend(QObject):
 
         remaining = self.plugin.api.runtime.remaining_time
         if not remaining:
-            self._current_remaining_text = ""
+            self._set_remaining_text("")
             return
 
         minutes = remaining.get("minute", 0)
         seconds = remaining.get("second", 0)
         total_seconds = minutes * 60 + seconds
 
+        # 倒计时样式：大字号用英文缩写（x min/x sec/x min 后/x sec 后）
+        if self._countdown_style == "large":
+            if total_seconds < 60:
+                secs = max(1, total_seconds)
+                if self._current_state == 1:
+                    self._set_remaining_text(f"{secs} sec")
+                else:
+                    self._set_remaining_text(f"{secs} sec 后")
+            else:
+                mins = round(total_seconds / 60)
+                if self._current_state == 1:
+                    self._set_remaining_text(f"{mins} min")
+                else:
+                    self._set_remaining_text(f"{mins} min 后")
+            return
+
         if total_seconds < 60:
             secs = max(1, total_seconds)
             if self._current_state == 1:
-                self._current_remaining_text = f"剩 {secs} 秒"
+                self._set_remaining_text(f"剩 {secs} 秒")
             else:
-                self._current_remaining_text = f"{secs} 秒后上课"
+                self._set_remaining_text(f"{secs} 秒后上课")
         else:
             mins = round(total_seconds / 60)
             if self._current_state == 1:
-                self._current_remaining_text = f"剩 {mins} 分钟"
+                self._set_remaining_text(f"剩 {mins} 分钟")
             else:
-                self._current_remaining_text = f"{mins} 分钟后上课"
+                self._set_remaining_text(f"{mins} 分钟后上课")
 
     def set_dark_theme(self, is_dark):
         if self._is_dark != is_dark:
@@ -665,6 +724,23 @@ class LessonsBackend(QObject):
         """QML flags 绑定：正常模式下是否置底"""
         return self._layer_bottommost
 
+    def _update_countdown_style(self):
+        """从插件设置读取倒计时样式（default/large），变化时 emit 信号供 QML 更新字号。"""
+        try:
+            style = self.plugin.settings_backend.getString("countdown_style")
+        except Exception:
+            style = "default"
+        if style not in ("default", "large"):
+            style = "default"
+        if style != self._countdown_style:
+            self._countdown_style = style
+            self.countdownStyleChanged.emit()
+
+    @Property(str, notify=countdownStyleChanged)
+    def countdownStyle(self):
+        """倒计时样式：default（默认字号）/ large（大字号）"""
+        return self._countdown_style
+
     @Property(str, notify=modeChanged)
     def mode(self):
         return self._mode
@@ -709,7 +785,7 @@ class LessonsBackend(QObject):
     def currentIcon(self):
         return self._current_icon
 
-    @Property(str, notify=lessonsUpdated)
+    @Property(str, notify=remainingTextChanged)
     def currentRemainingText(self):
         return self._current_remaining_text
 
@@ -802,6 +878,24 @@ class SettingsBackend(QObject):
     def setString(self, key, value):
         """写入字符串设置项（自动保存，首次写入生成配置文件）"""
         value = str(value)
+        if self._config.get(key) == value:
+            return
+        self._config[key] = value
+        self._save_config()
+        self.settingsChanged.emit()
+
+    @Slot(str, result=int)
+    def getInt(self, key):
+        """读取整数设置：配置文件有该键用配置值，否则用源码默认值"""
+        try:
+            return int(self._config.get(key, DEFAULT_SETTINGS.get(key, 0)))
+        except Exception:
+            return int(DEFAULT_SETTINGS.get(key, 0))
+
+    @Slot(str, int)
+    def setInt(self, key, value):
+        """写入整数设置项（自动保存，首次写入生成配置文件）"""
+        value = int(value)
         if self._config.get(key) == value:
             return
         self._config[key] = value
@@ -924,6 +1018,9 @@ class Plugin(CW2Plugin):
         self.settings_backend.settingsChanged.connect(self._on_plugin_settings_changed)
         if self.backend:
             self.backend._update_layer_state()
+            # 倒计时样式需在 settings_backend 就绪后重新加载（LessonsBackend.__init__
+            # 里调用时 settings_backend 尚为 None，会回落到 default，导致重启后配置失效）
+            self.backend._update_countdown_style()
         plugin_logger.debug("已连接 settingsChanged 信号")
 
         self.engine = QQmlApplicationEngine()
@@ -976,9 +1073,14 @@ class Plugin(CW2Plugin):
             self.backend._update_layer_state()
 
     def _on_plugin_settings_changed(self):
-        """插件设置变化（小组件图层等）：刷新图层状态，驱动 QML flags 绑定重新求值"""
+        """插件设置变化（小组件图层/倒计时样式/自动关闭等）：刷新图层状态，驱动 QML flags 绑定重新求值"""
         if self.backend:
             self.backend._update_layer_state()
+            # 倒计时样式变化：更新样式属性（QML 字号）并重新生成倒计时文本
+            self.backend._update_countdown_style()
+            self.backend._update_current_icon_and_remaining()
+            # 自动关闭设置变化：重新检查（开关/延迟时间/单位变化立即生效）
+            self.backend._check_auto_close()
 
     def _start_layer_sync(self):
         self._layer_timer = QTimer()
