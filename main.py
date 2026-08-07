@@ -832,6 +832,41 @@ class SettingsBackend(QObject):
         self.plugin = plugin
         self._config_path = os.path.join(plugin.PATH, SETTINGS_CONFIG_FILENAME)
         self._config = self._load_config()
+        # 插件元数据（"关于"页展示用，从 cwplugin.json 读取，与发版流程同步）
+        self._plugin_meta = self._load_plugin_meta()
+
+    def _load_plugin_meta(self):
+        """读取 cwplugin.json 获取插件元数据；缺失/损坏时返回空 dict（"关于"页用兜底值）"""
+        try:
+            meta_path = os.path.join(self.plugin.PATH, "cwplugin.json")
+            if os.path.exists(meta_path):
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+        except Exception as e:
+            plugin_logger.debug(f"读取插件元数据失败: {e}")
+        return {}
+
+    @Property(str, constant=True)
+    def pluginName(self):
+        return self._plugin_meta.get("name", "Lessons Displayer")
+
+    @Property(str, constant=True)
+    def pluginVersion(self):
+        return self._plugin_meta.get("version", "0.0.0")
+
+    @Property(str, constant=True)
+    def pluginAuthor(self):
+        return self._plugin_meta.get("author", "")
+
+    @Property(str, constant=True)
+    def pluginUrl(self):
+        return self._plugin_meta.get("url", "")
+
+    @Property(str, constant=True)
+    def pluginDescription(self):
+        return self._plugin_meta.get("description", "")
 
     def _load_config(self):
         """读取配置文件；不存在/损坏时返回空 dict（全部用默认值）"""
