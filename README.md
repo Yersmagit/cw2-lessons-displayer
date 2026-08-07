@@ -21,10 +21,6 @@
 - 可以完全展示当日课程信息，完全杜绝抄课表。
 本插件适用于 [Class Widgets 2](https://github.com/rinlit-233-shiroko/class-widgets-2) 。
 
-> [!TIP]
-> 
-> _在寻找适用于 Class Widgets 1 的插件？请前往 旧版 [Lessons Displayer](https://github.com/Yersmagit/cw-lessons-displayer) 页面。_
-
 ### ✨ 特性 / Features
 - 显示当日课程信息
 - 提供全屏白板模式和熄屏模式
