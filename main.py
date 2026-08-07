@@ -1457,6 +1457,10 @@ class Plugin(CW2Plugin):
             self.backend.set_switching(True)
             engine = QQmlApplicationEngine()
             engine.rootContext().setContextProperty("lessonsBackend", self.backend)
+            # 新窗口首次加载时抑制高亮课程展开动画（Behavior on width 禁用），
+            # 让新窗口直接以展开状态显示，避免与旧窗口正在播放的展开动画重复
+            # （只对特殊窗口引擎生效，主引擎无此 context property，动画正常）。
+            engine.rootContext().setContextProperty("suppressExpandAnim", True)
             if self.settings_backend:
                 engine.rootContext().setContextProperty("settingsBackend", self.settings_backend)
             # 复制主引擎的导入路径（保证 RinUI 等可用）

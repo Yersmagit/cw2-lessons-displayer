@@ -251,8 +251,12 @@ Item {
                         width: targetWidth
                         height: (lessonsBackend.mode === "normal" ? 40 : 46) * lessonsBackend.scaleFactor
 
-                        // 使用 Behavior 为宽度添加动画
+                        // 使用 Behavior 为宽度添加动画。
+                        // 特殊窗口引擎在创建时注入 suppressExpandAnim=true（仅新窗口可见），
+                        // 用于抑制首次加载的展开动画（新窗口直接以展开状态显示，避免与旧
+                        // 窗口正在播放的展开动画重复）；主引擎无此属性，动画正常播放。
                         Behavior on width {
+                            enabled: typeof suppressExpandAnim === "undefined" ? true : !suppressExpandAnim
                             NumberAnimation {
                                 duration: 400
                                 easing.type: Easing.OutCubic
