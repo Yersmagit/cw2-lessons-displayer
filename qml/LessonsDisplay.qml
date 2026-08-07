@@ -401,14 +401,22 @@ Item {
                             Text {
                                 id: remainingText
                                 text: lessonsBackend.currentRemainingText
-                                font.pixelSize: 18 * lessonsBackend.scaleFactor
+                                // 倒计时样式：大字号(large)时与课程名称同字号（27），否则默认（18）
+                                font.pixelSize: (lessonsBackend.countdownStyle === "large" ? 25 : 18) * lessonsBackend.scaleFactor
                                 font.family: lessonsBackend.fontFamily
                                 font.weight: lessonsBackend.fontWeight
                                 color: effectiveDarkTheme ? "#ffffff" : "#000000"
+                                // 大字号时降低透明度：深色模式 75%，浅色模式 65%
+                                opacity: lessonsBackend.countdownStyle === "large"
+                                    ? (effectiveDarkTheme ? 0.8 : 0.7)
+                                    : 1.0
                                 verticalAlignment: Text.AlignVCenter
                                 height: parent.height
                                 Behavior on color {
                                     ColorAnimation { duration: 400; easing.type: Easing.OutCubic }
+                                }
+                                Behavior on opacity {
+                                    NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
                                 }
                                 // 当内容宽度变化时，更新父项目标宽度
                                 onContentWidthChanged: updateTargetWidth()
