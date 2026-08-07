@@ -3,7 +3,7 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import RinUI
 
-// "高级"设置页：提供"恢复默认设置"按钮（清空配置文件，全部回落到源码默认值）。
+// "高级"设置页：两个设置分组（动画性能优化 / 恢复默认设置），各带标题。
 // 根为 ColumnLayout（与主程序 SettingsLayout 一致），设置项从上到下依次排开，
 // 由 SettingsDialog 的 Flickable 承载滚动。
 ColumnLayout {
@@ -12,7 +12,7 @@ ColumnLayout {
 
     Text {
         typography: Typography.BodyStrong
-        text: "高级"
+        text: "高级选项"
     }
 
     SettingCard {
@@ -26,6 +26,13 @@ ColumnLayout {
         }
     }
 
+    Text {
+        typography: Typography.BodyStrong
+        text: "恢复"
+        // 与上方选项保持 8px 间距（ColumnLayout spacing 4 + 额外 4px）
+        Layout.topMargin: 4
+    }
+
     SettingCard {
         Layout.fillWidth: true
         icon.name: "ic_fluent_arrow_reset_20_regular"
@@ -33,8 +40,37 @@ ColumnLayout {
         description: "清空本插件的配置文件，所有设置恢复为默认值"
 
         Button {
+            id: resetButton
             text: "恢复默认设置"
-            onClicked: settingsBackend.resetDefaults()
+            onClicked: {
+                settingsBackend.resetDefaults()
+                resetFlyout.open()
+                resetFlyoutTimer.restart()
+            }
+
+            // 恢复成功后按钮下方弹出的提示（含"好的"按钮，3 秒自动关闭）
+            Flyout {
+                id: resetFlyout
+                parent: resetButton
+                position: Position.Bottom
+                text: "已恢复默认设置"
+                buttonBox: [
+                    Button {
+                        text: "好的"
+                        highlighted: true
+                        onClicked: {
+                            resetFlyout.close()
+                            resetFlyoutTimer.stop()
+                        }
+                    }
+                ]
+            }
+
+            Timer {
+                id: resetFlyoutTimer
+                interval: 3000
+                onTriggered: resetFlyout.close()
+            }
         }
     }
 }
