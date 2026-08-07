@@ -19,7 +19,7 @@ ColumnLayout {
         Layout.fillWidth: true
         icon.name: "ic_fluent_play_20_regular"
         title: "动画性能优化"
-        description: "位置平移等动画播放期间暂时禁用窗口遮罩，动画结束后恢复，提升动画流畅度"
+        description: "动画播放时禁用部分计算以提高性能，有助于缓解 UI 撕裂问题"
 
         SettingsSwitch {
             settingKey: "animation_performance"

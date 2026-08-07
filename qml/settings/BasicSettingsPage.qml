@@ -22,7 +22,7 @@ ColumnLayout {
         Layout.fillWidth: true
         icon.name: "ic_fluent_layer_20_regular"
         title: "小组件图层"
-        description: "控制胶囊形 UI 默认状态下的窗口层级"
+        description: "控制本插件小组件的窗口层级"
 
         ComboBox {
             model: ListModel {
