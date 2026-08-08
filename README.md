@@ -32,7 +32,8 @@
   <img src="previews/ex_default.png" alt="ex_default" style="max-width:100%; height:auto;">
   </div>
 
-- 当前正在进行的课程或即将进行的课程会高亮显示，高亮颜色分别为橙红色和绿色。
+- 正在进行的课程或即将进行的课程会高亮显示，高亮颜色分别为橙红色和绿色。
+
   比如，数学课上课时，就是这样显示的：
   <div style="text-align: center;">
   <img src="previews/ex_on_class.png" alt="ex_on_class" style="max-width:100%; height:auto;">
