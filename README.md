@@ -15,6 +15,7 @@
 > [!TIP]
 > 
 > **插件现已更新到正式版！已支持自定义设置功能！**
+> 
 > 更新内容详见 [更新日志](https://github.com/Yersmagit/cw2-lessons-displayer/releases)。
 
 ## 📖 简介 / Introduction
