@@ -55,9 +55,12 @@ Window {
         source: "LessonsDisplay.qml"
         asynchronous: false
         // 根据模式动态绑定位置和宽度
+        // 注意：特殊模式宽度用 root.width（Window 本身）而非 parent.width——parent 是
+        // Window 的 contentItem（QQuickRootItem），窗口隐藏时其宽度为 0，会导致
+        // LessonsDisplay 布局错乱（见 SpecialModeWindow 注释）。
         x: lessonsBackend.mode === "normal" ? lessonsBackend.uiX : 4
         y: lessonsBackend.mode === "normal" ? lessonsBackend.uiY : 4
-        width: lessonsBackend.mode === "normal" ? lessonsBackend.uiWidth : parent.width - 8
+        width: lessonsBackend.mode === "normal" ? lessonsBackend.uiWidth : root.width - 8
         height: 54 * lessonsBackend.scaleFactor
         opacity: lessonsBackend.uiOpacity  // 透明度绑定后端属性，实现淡入淡出
         z: 1

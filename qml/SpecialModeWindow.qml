@@ -32,13 +32,17 @@ Window {
     }
 
     // 课程显示（复用胶囊 UI 内容，位于左上角）
+    // 注意：宽度必须用 root.width（Window 本身），不能用 parent.width——parent 是
+    // Window 的 contentItem（QQuickRootItem），窗口隐藏（visible:false）时其宽度为 0，
+    // 会导致 LessonsDisplay 在隐藏创建期间布局错乱（ListView/按钮挤到负坐标），
+    // 窗口显示后才恢复。root.width 恒等于 Screen.width，不受隐藏影响。
     Loader {
         id: uiLoader
         objectName: "specialUiLoader"
         source: "LessonsDisplay.qml"
         x: 4
         y: 4
-        width: parent.width - 8
+        width: root.width - 8
         height: 54 * lessonsBackend.scaleFactor
         onStatusChanged: {
             if (status === Loader.Ready || status === Loader.Error) {
