@@ -17,7 +17,7 @@ user-invocable: true
 - 若 `CWPT_TOKEN` secret 未在 GitHub 仓库配置（发布到插件广场必需），发布会成功但插件广场不会更新——此时提醒用户检查 secret。
 
 ## 背景（2026-08 后发版会做什么，供发版后核对）
-- CI 会自动：`cw-plugin-pack` 打包（.cwplugin + .zip）→ `cw-plugin-publish` 发布到插件广场（需要 GitHub Actions secret `CWPT_TOKEN`，从插件广场控制台 https://plaza.cw.rinlit.cn/console 获取）→ `git-cliff --config .git-cliff.toml --tag v{ver}` 生成符合配置模板的 release 文档 → 创建 GitHub Release。
+- CI 会自动：`cw-plugin-pack` 打包（.cwplugin + .zip）→ `cw-plugin-publish` 发布到插件广场（需要 GitHub Actions secret `CWPT_TOKEN`，从插件广场控制台 https://plaza.cw.rinlit.cn/console 获取）→ `git-cliff --config .git-cliff.toml --latest` 生成**只含当前最新版本**、符合配置模板的 release 文档 → 创建 GitHub Release。**git-cliff 必须用 `--latest`**（不是 `--tag`——那会从第一个 tag 生成全部历史）。
 - **插件广场能否显示新版本，取决于 release.yml 是否有 `Publish to plugin registry` 步骤 + `CWPT_TOKEN` secret**。若插件广场版本不更新，优先排查这两点（其次排查 `cw-plugin-publish` 是否因 token 为空失败）。
 
 ## 流程
