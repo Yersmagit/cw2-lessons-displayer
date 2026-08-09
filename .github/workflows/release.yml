@@ -75,7 +75,10 @@ jobs:
       
       - name: Generate changelog with git-cliff
         run: |
-          git-cliff --config .git-cliff.toml --tag v${{ env.VERSION }} > CHANGELOG.md
+          # 只处理最新 tag（当前 push 的 vX.Y.Z），生成该版本单独的 changelog，
+          # 用 .git-cliff.toml 的 body 模板（config 必须保留，否则回退默认格式）。
+          # 不用 --tag v${{ env.VERSION }}：那会从仓库第一个 tag 生成全部历史。
+          git-cliff --config .git-cliff.toml --latest > CHANGELOG.md
           echo "CHANGELOG<<EOF" >> $GITHUB_ENV
           cat CHANGELOG.md >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
