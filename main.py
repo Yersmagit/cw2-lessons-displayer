@@ -985,6 +985,12 @@ class Plugin(CW2Plugin):
         self.special_engine = None
         self.special_window = None
 
+        # 贴边隐藏：主程序小组件隐藏时是否已真正隐藏插件主窗口（避免特殊模式
+        # 与初始显示逻辑把它误当作"未显示"）；_hide_window_timer 用于延迟隐藏
+        # （等胶囊滑出屏幕后再隐藏，避免恢复时的陈旧帧闪现）
+        self._edge_hidden = False
+        self._hide_window_timer = None
+
         self._cursor_timer = QTimer()
         self._cursor_timer.timeout.connect(self._check_mouse_idle)
         self._last_mouse_pos = None
@@ -1010,6 +1016,41 @@ class Plugin(CW2Plugin):
             plugin_logger.debug(f"日志文件已创建: {log_file}")
         except Exception as e:
             plugin_logger.error(f"设置插件日志失败: {e}")
+
+    def _ensure_engine_import_paths(self, engine):
+        """确保 QML 引擎能解析 `import RinUI`（兼容新版主程序）。
+
+        插件为 FullScreenWindow/SpecialModeWindow 自建独立的 QQmlApplicationEngine，
+        新版主程序不再为插件引擎注入 RinUI 的 QML 导入路径，导致
+        `import RinUI` 解析失败、engine.rootObjects() 为空（"无法创建全屏窗口"）。
+        这里参考主程序 RinUIWindow.load() 的做法，把 RinUI 包所在目录
+        （site-packages，内含 RinUI/qmldir）加入引擎导入路径；
+        旧版主程序若已注入该路径，重复添加也无副作用（Qt 自带去重）。
+        """
+        candidates = []
+        try:
+            from RinUI.core.config import RINUI_PATH
+            candidates.append(str(RINUI_PATH))
+        except Exception:
+            try:
+                import RinUI as _rinui_mod
+                # RinUI/__init__.py 的父目录的父目录 = site-packages
+                candidates.append(os.path.dirname(os.path.dirname(_rinui_mod.__file__)))
+            except Exception as e:
+                plugin_logger.debug(f"获取 RinUI 导入路径失败: {e}")
+                return False
+        try:
+            existing = set(engine.importPathList())
+            added = False
+            for p in candidates:
+                if p and p not in existing:
+                    engine.addImportPath(p)
+                    added = True
+                    plugin_logger.debug(f"已为引擎添加 RinUI 导入路径: {p}")
+            return added
+        except Exception as e:
+            plugin_logger.debug(f"设置引擎导入路径失败: {e}")
+            return False
 
     def on_load(self):
         self.api.set_current_plugin(self)
@@ -1059,6 +1100,8 @@ class Plugin(CW2Plugin):
         plugin_logger.debug("已连接 settingsChanged 信号")
 
         self.engine = QQmlApplicationEngine()
+        # 兼容新版主程序：确保 import RinUI 可解析（否则 QML 加载失败，无根对象）
+        self._ensure_engine_import_paths(self.engine)
         self.engine.rootContext().setContextProperty("lessonsBackend", self.backend)
         self.engine.rootContext().setContextProperty("settingsBackend", self.settings_backend)
 
@@ -1098,6 +1141,11 @@ class Plugin(CW2Plugin):
 
     def _on_config_changed(self):
         plugin_logger.debug("配置变化，更新位置、背景不透明度和字体")
+        # 先同步贴边隐藏的窗口显隐，再更新位置：
+        # 恢复显示时须先 show 窗口（此时 loader 仍在隐藏位置 -30/顶部），
+        # 再 update_position 改 uiY 触发平移动画——否则位置动画在窗口隐藏期间
+        # 被压缩/浪费，show 时已近目标，出现"先闪现目标位置、再从顶部滑下"。
+        self._sync_hide_visibility()
         if self.backend:
             # 纯平移（位置/隐藏变化，宽度不变）：动画性能优化启用时动画期间临时禁用 mask
             self.backend.update_position(trigger_anim_optimize=True)
@@ -1106,6 +1154,100 @@ class Plugin(CW2Plugin):
             self.backend._update_scale_factor()
             # 主程序 widgets_layer 配置变化（跟随软件设置）时刷新图层状态
             self.backend._update_layer_state()
+
+    def _sync_hide_visibility(self):
+        """贴边隐藏主程序小组件时，真正隐藏插件主窗口，解除时恢复显示。
+
+        兼容新版主程序：仅靠 opacity=0 + mask 移到屏幕外时，插件窗口仍以
+        透明形态驻留在屏幕上（isVisible 恒为 True），用户感知为"UI 仍显示"。
+        这里在 hide.state=True 时隐藏主窗口、恢复时重新显示，实现"直接不显示"。
+
+        仅在正常模式处理（特殊模式窗口显隐由模式切换单独管理）；用 _edge_hidden
+        标记区分"因贴边隐藏而隐藏"与"尚未显示/特殊模式隐藏"，避免误显示。
+        """
+        if not self.window or not self.backend or not self._configs:
+            return
+        if self.backend.mode != "normal":
+            return
+        try:
+            hide = self._configs.interactions.hide.state
+        except Exception as e:
+            plugin_logger.debug(f"读取隐藏状态失败: {e}")
+            return
+        try:
+            if hide:
+                if self.window.isVisible() and not self._edge_hidden:
+                    self._edge_hidden = True
+                    # 延迟隐藏：等胶囊滑出屏幕（与主程序小组件隐藏动画同步，
+                    # update_position 随后会移动胶囊到屏幕外）后再隐藏窗口——
+                    # 保证隐藏前最后一帧为"胶囊在屏幕外"（不可见），
+                    # 恢复显示时不闪现"隐藏前胶囊在目标位置"的陈旧帧。
+                    try:
+                        if self._hide_window_timer:
+                            self._hide_window_timer.stop()
+                        self._hide_window_timer = QTimer()
+                        self._hide_window_timer.setSingleShot(True)
+                        self._hide_window_timer.timeout.connect(self._do_edge_hide)
+                        self._hide_window_timer.start(500)
+                    except Exception:
+                        self._do_edge_hide()
+            else:
+                # 解除隐藏：取消待执行的延迟隐藏
+                if self._hide_window_timer:
+                    try:
+                        self._hide_window_timer.stop()
+                    except Exception:
+                        pass
+                if self._edge_hidden and not self.window.isVisible():
+                    self._edge_hidden = False
+                    self.window.show()
+                    # 恢复后确保 mask 应用到正常位置（动画优化可能已禁用 mask）
+                    self._enable_mask_and_update()
+                    plugin_logger.debug("贴边隐藏解除：已恢复插件主窗口")
+        except Exception as e:
+            plugin_logger.debug(f"同步贴边隐藏窗口失败: {e}")
+
+    def _do_edge_hide(self):
+        """延迟隐藏到期：胶囊已滑出屏幕后真正隐藏插件主窗口。"""
+        try:
+            if self.window and self._edge_hidden and self.window.isVisible():
+                self.window.hide()
+                plugin_logger.debug("贴边隐藏：已隐藏插件主窗口（胶囊滑出后）")
+        except Exception as e:
+            plugin_logger.debug(f"延迟隐藏窗口失败: {e}")
+
+    def _check_mask_health(self):
+        """mask 自愈：正常情况下（正常模式、无 mask 占用、无动画优化、窗口可见），
+        若 mask 被意外禁用或与实际 UI 区域不符，重新启用并应用，防止偶发 mask 失效。
+
+        仅在引用计数归零且非动画优化占用时才修复，不会误恢复正在使用的 mask
+        （右键菜单/文本提示/平移动画期间 mask 应保持禁用）。
+        """
+        try:
+            if not self.window or not self.backend:
+                return
+            if self.backend.mode != "normal":
+                return
+            if not self.window.isVisible():
+                return
+            if self.backend._mask_hide_refs > 0:
+                return
+            if self.backend._anim_optimize_active:
+                return
+            # 引用计数归零且无动画优化时 mask 本应处于启用状态。
+            if not self._mask_enabled:
+                self._mask_enabled = True
+                self._update_mask()
+                plugin_logger.debug("mask 自愈：恢复被意外禁用的 mask")
+            else:
+                # _mask_enabled=True 但实际 mask 为空（可能被 setFlags/系统重置）
+                # → 重新应用，防止窗口失去裁剪、出现全屏透明形态
+                cur = self.window.mask()
+                if cur is not None and cur.isEmpty():
+                    self._update_mask()
+                    plugin_logger.debug("mask 自愈：重新应用被清空的 mask")
+        except Exception as e:
+            plugin_logger.debug(f"mask 自愈检查失败: {e}")
 
     def _on_plugin_settings_changed(self):
         """插件设置变化（小组件图层/倒计时样式/自动关闭等）：刷新图层状态，驱动 QML flags 绑定重新求值"""
@@ -1140,6 +1282,8 @@ class Plugin(CW2Plugin):
             self._apply_layer_flags()
         except Exception as e:
             plugin_logger.debug(f"同步窗口层级失败: {e}")
+        # mask 自愈：周期检查并修复偶发的 mask 失效/错位
+        self._check_mask_health()
 
     def _apply_layer_flags(self):
         """按图层策略设置主窗口 Qt flags + Win32 层级（置顶/置底/普通互斥，可靠）。
@@ -1343,6 +1487,10 @@ class Plugin(CW2Plugin):
             # 显示窗口（opacity 保持 0，内容待淡入）
             self.window.show()
             plugin_logger.info("窗口已显示，等待宽度变化后淡入")
+
+            # 启动时若主程序已处于贴边隐藏状态，则直接隐藏插件主窗口
+            self._edge_hidden = False
+            self._sync_hide_visibility()
 
             self._sync_window_layer()
             self._start_width_polling()
@@ -1606,6 +1754,8 @@ class Plugin(CW2Plugin):
                     engine.addImportPath(p)
             except Exception:
                 pass
+            # 兜底：兼容新版主程序（主引擎可能未注入 RinUI 路径）
+            self._ensure_engine_import_paths(engine)
             qml_path = os.path.join(self.PATH, "qml", "SpecialModeWindow.qml")
             engine.load(QUrl.fromLocalFile(qml_path))
             if not engine.rootObjects():
@@ -1698,6 +1848,9 @@ class Plugin(CW2Plugin):
                 self._cursor_hidden = False
             self._cursor_timer.stop()
             QTimer.singleShot(400, self._enable_mask_and_update)
+            # 退出特殊模式后若主程序仍处于贴边隐藏，则保持插件主窗口隐藏
+            self._edge_hidden = False
+            self._sync_hide_visibility()
         else:
             # 进入特殊模式：特殊窗口为纯色全屏无 mask，清零残留的引用计数
             if self.backend:
@@ -1778,6 +1931,11 @@ class Plugin(CW2Plugin):
         if self._theme_timer:
             self._theme_timer.stop()
             self._theme_timer.deleteLater()
+        if self._hide_window_timer:
+            try:
+                self._hide_window_timer.stop()
+            except Exception:
+                pass
         if self.ui_loader:
             try:
                 self.ui_loader.xChanged.disconnect(self._update_mask)
