@@ -62,6 +62,12 @@ jobs:
           unzip -l *.cwplugin | grep qml/ && echo "✅ .cwplugin includes qml/" || echo "❌ .cwplugin missing qml/"
           unzip -l *.zip | grep qml/ && echo "✅ .zip includes qml/" || echo "❌ .zip missing qml/"
       
+      - name: Publish to plugin registry
+        env:
+          CWPT_TOKEN: ${{ secrets.CWPT_TOKEN }}
+        run: |
+          cw-plugin-publish
+      
       - name: Get version from tag
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
       
