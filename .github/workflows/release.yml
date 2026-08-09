@@ -43,9 +43,11 @@ jobs:
           rm -rf log/
           rm -rf __pycache__/
           rm -rf cw2_lessons_displayer.egg-info/
-          # 仓库/CI 专用文件也不应打进包
+          # 仓库/CI 专用文件也不应打进包。
+          # 注意：不能删 .git-cliff.toml —— 后续 git-cliff 生成 changelog 需要读取它
+          # （删掉会导致 git-cliff 回退默认格式，release 文档不符合配置模板）。
           rm -rf .github/
-          rm -f .gitignore .git-cliff.toml
+          rm -f .gitignore
           echo "Removed non-packaging files"
       
       - name: Build .cwplugin package
