@@ -38,8 +38,8 @@ user-invocable: true
 
 ## 发版后核对（新增）
 1. **GitHub Actions 运行**：推送 tag 后约 2~4 分钟，在仓库 Actions 页应看到 `Release Plugin` 运行成功（`Publish to plugin registry` 步骤必须 success，否则插件广场不更新）。
-2. **GitHub Release 文档格式**：应看到 `## 插件新版本 (v{new_ver})` 标题 + 折叠分组 + `**完整 Changelog**: 版本对比 ...` 行（这是 `.git-cliff.toml` 配置的格式）。若看到 `## [{ver}] - 日期` 默认格式，说明 `.git-cliff.toml` 在 CI 中被误删或 git-cliff 调用方式错误，需排查 release.yml。
-3. **插件广场版本**：打开 https://plaza.cw.rinlit.cn/plugins/com.yersmagit.lessonsdisplayer 应显示 `{new_ver}`。
+2. **GitHub Release 文档格式**：用 API 查询 `https://api.github.com/repos/Yersmagit/cw2-lessons-displayer/releases/tags/v{new_ver}` 的 `body`，应看到 `## 插件新版本 (v{new_ver})` 标题 + 折叠分组 + `**完整 Changelog**: 版本对比 ...` 行（这是 `.git-cliff.toml` 配置的格式）。若看到 `## [{ver}] - 日期` 默认格式，说明 `.git-cliff.toml` 在 CI 中被误删或 git-cliff 调用方式错误，需排查 release.yml。
+3. **插件广场版本**：用 API 查询 `https://plaza.cw.rinlit.cn/api/plugins/com.yersmagit.lessonsdisplayer` 的 `updated_at`，若与本次发布时刻吻合即发布成功。**用 API 验证即可，不要截图**（省 token）。
 4. **同步已安装副本**：把更新后的 `cwplugin.json` 复制到已安装副本 `h:\ClassWidgets-2\Class Widgets 2.0.0.dev20260517-alpha\plugins\com.yersmagit.lessonsdisplayer\cwplugin.json`（用 Get-FileHash 验证一致），避免本地插件版本显示落后。
 
 ## 输出格式
