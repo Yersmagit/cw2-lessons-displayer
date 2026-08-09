@@ -1085,6 +1085,10 @@ class Plugin(CW2Plugin):
         self.backend.modeChanged.connect(self._on_mode_changed)
         plugin_logger.debug("已连接 modeChanged 信号")
 
+        # 图层状态变化时立即应用（置顶/置底/普通互斥），置顶稳定后无需每秒刷新
+        self.backend.layerChanged.connect(self._on_layer_changed)
+        plugin_logger.debug("已连接 layerChanged 信号")
+
         self.backend.positionChanged.connect(self._update_mask)
         self.backend.widthChanged.connect(self._update_mask)
 
@@ -1276,10 +1280,13 @@ class Plugin(CW2Plugin):
             self._force_topmost()
             return
         try:
-            # 每次同步重新计算图层状态（follow 时跟随主程序 widgets_layer 配置）
+            # 每次同步重新计算图层状态（follow 时跟随主程序 widgets_layer 配置）；
+            # 状态变化会 emit layerChanged → _on_layer_changed 触发 _apply_layer_flags。
             self.backend._update_layer_state()
-            # 统一应用图层：置顶/置底/普通三态互斥（flags + Win32 SetWindowPos）
-            self._apply_layer_flags()
+            # 置顶状态稳定后无需每秒刷新（始终置顶/跟随主程序置顶由 layerChanged
+            # 在状态变化时应用）；非置顶（普通/置底）仍每秒应用作兜底。
+            if not self.backend.layerTopmost:
+                self._apply_layer_flags()
         except Exception as e:
             plugin_logger.debug(f"同步窗口层级失败: {e}")
         # mask 自愈：周期检查并修复偶发的 mask 失效/错位
@@ -1328,6 +1335,22 @@ class Plugin(CW2Plugin):
                     self.window.lower()
         except Exception as e:
             plugin_logger.debug(f"应用图层失败: {e}")
+
+    def _on_layer_changed(self):
+        """图层状态变化（layerTopmost/layerBottommost）时应用图层（置顶/置底/普通互斥）。
+
+        由 backend.layerChanged 触发（_update_layer_state 状态变化时 emit），
+        保证"始终置顶/跟随主程序置顶"等图层切换立即生效；置顶状态稳定后
+        无需每秒刷新（_sync_window_layer 不再对置顶做无谓的 setFlags/SetWindowPos）。
+        仅在正常模式且无弹出浮层占用时应用，避免破坏浮层置顶。
+        """
+        if not self.window or not self.backend:
+            return
+        if self.backend.mode != "normal":
+            return
+        if self._topmost_refs > 0:
+            return
+        self._apply_layer_flags()
 
     def _start_theme_polling(self):
         self._theme_timer = QTimer()
@@ -1493,6 +1516,9 @@ class Plugin(CW2Plugin):
             self._sync_hide_visibility()
 
             self._sync_window_layer()
+            # 窗口就绪后显式应用一次图层（置顶/置底/普通）：_sync_window_layer
+            # 在置顶状态时不再每秒应用，须在此确保初始置顶生效
+            self._apply_layer_flags()
             self._start_width_polling()
 
             plugin_logger.info("UI 已加载，mask 更新连接已建立")
@@ -1918,6 +1944,11 @@ class Plugin(CW2Plugin):
         if self._configs:
             try:
                 self._configs.configChanged.disconnect(self._on_config_changed)
+            except:
+                pass
+        if self.backend:
+            try:
+                self.backend.layerChanged.disconnect(self._on_layer_changed)
             except:
                 pass
         if self.settings_backend:

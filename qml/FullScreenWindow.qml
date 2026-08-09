@@ -8,19 +8,25 @@ import QtQuick.Window 2.15
 Window {
     id: root
     visible: false
-    // flags 绑定到模式与浮层：特殊模式或右键菜单/设置页弹出时置顶。
-    // （模仿特殊模式：QML 层 flags 直接带 WindowStaysOnTopHint，窗口创建/显示即置顶，
-    // 比 Python 运行时 setFlag 更可靠。）
-    // ⚠️ 小组件图层（置顶/置底）不在此绑定——由 Python `_apply_layer_flags()` 统一互斥
-    // 控制（WindowStaysOnTopHint/WindowStaysOnBottomHint + SetWindowPos），避免 QML 绑定
-    // 重新求值时覆盖/残留 top/bottom hint 导致置顶置底切换不可靠。
+    // flags 绑定到模式、浮层与小组件图层：特殊模式或右键菜单/设置页弹出时置顶；
+    // 正常模式跟随图层策略（置顶/置底/普通互斥），与主程序 updateLayer() 思路一致
+    // （由 Python 后端计算 layerTopmost/layerBottommost 状态，QML 绑定据此设 flags）。
+    // 这样绑定在 popupOpen/mode/图层状态变化重新求值时始终返回正确标志，
+    // 不会把 Python 设置的置顶清掉；置顶状态稳定后也无需每秒刷新。
     flags: {
         var baseFlags = Qt.FramelessWindowHint | Qt.Tool;
+        // 特殊模式或浮层弹出：置顶
         if (lessonsBackend.mode !== "normal" || lessonsBackend.popupOpen) {
             return baseFlags | Qt.WindowStaysOnTopHint;
-        } else {
-            return baseFlags;
         }
+        // 正常模式：跟随小组件图层策略（置顶/置底/普通互斥）
+        if (lessonsBackend.layerTopmost) {
+            return baseFlags | Qt.WindowStaysOnTopHint;
+        }
+        if (lessonsBackend.layerBottommost) {
+            return baseFlags | Qt.WindowStaysOnBottomHint;
+        }
+        return baseFlags;
     }
     color: "transparent"
 
