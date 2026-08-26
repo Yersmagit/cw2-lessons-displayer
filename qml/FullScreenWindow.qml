@@ -30,8 +30,15 @@ Window {
     }
     color: "transparent"
 
-    // 窗口可见性：特殊模式时全屏，正常模式时普通窗口
-    visibility: lessonsBackend.mode !== "normal" ? Window.FullScreen : Window.Windowed
+    // 窗口可见性：特殊模式时全屏，正常模式时普通窗口。
+    // 注意：必须让 visibility 尊重 visible（避免 "Conflicting properties 'visible'
+    // and 'visibility'" 冲突导致窗口启动即显示）：visible:false 创建时保持 Hidden，
+    // 由 Python 端 show()/hide() 控制显示后再按模式决定全屏/窗口化。
+    visibility: {
+        if (!visible)
+            return Window.Hidden
+        return lessonsBackend.mode !== "normal" ? Window.FullScreen : Window.Windowed
+    }
 
     // 窗口始终全屏且不透明（全屏模式下尺寸自动为屏幕大小，但保留绑定以防万一）
     x: 0

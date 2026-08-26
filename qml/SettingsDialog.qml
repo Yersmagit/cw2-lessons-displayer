@@ -92,11 +92,14 @@ Dialog {
                     // 因此改为在 openDialog()/onClosed()/delegate onClicked 中手动同步。
                     delegate: ListViewDelegate {
                         Layout.fillWidth: true
-                        leftArea: Icon {
-                            icon: modelData.icon
-                            size: 22
-                        }
-                        middleArea: [
+                        // 兼容新版 RinUI：ListViewDelegate 已改为标准 ItemDelegate，
+                        // 用 contentItem 自定义内容（不再支持旧版的 leftArea/middleArea）。
+                        contentItem: RowLayout {
+                            spacing: 8
+                            Icon {
+                                name: modelData.icon
+                                size: 22
+                            }
                             Text {
                                 wrapMode: Text.NoWrap
                                 text: modelData.title
@@ -104,10 +107,10 @@ Dialog {
                                 Layout.fillWidth: true
                                 Layout.rightMargin: 12
                             }
-                        ]
+                        }
                         onClicked: {
                             root.currentIndex = index
-                            sidebarList.currentIndex = index  // ListViewDelegate 内部已设置，此处显式保持与 root 一致
+                            sidebarList.currentIndex = index  // 此处显式保持与 root 一致
                         }
                     }
                 }

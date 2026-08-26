@@ -1053,7 +1053,9 @@ class Plugin(CW2Plugin):
             return False
 
     def on_load(self):
-        self.api.set_current_plugin(self)
+        # 兼容新版主程序：调用基类 on_load 以设置 self.pid、注册 PluginBackendBridge、
+        # 设当前插件并发出 initialized 信号（旧版基类为空实现，调用无副作用）。
+        super().on_load()
         self._setup_logging()
         plugin_logger.info("今日课程插件加载成功")
 
