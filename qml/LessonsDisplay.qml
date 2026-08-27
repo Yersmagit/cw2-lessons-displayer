@@ -451,18 +451,22 @@ Item {
                 Component {
                     id: placeholderComponent
                     Item {
-                        property real textWidth: placeholderText.contentWidth
-                        property real iconWidth: 24 * lessonsBackend.scaleFactor
-                        width: iconWidth + 8 * lessonsBackend.scaleFactor + textWidth + 20 * lessonsBackend.scaleFactor
+                        // 占位提示：用 RowLayout + AlignVCenter 可靠垂直居中。
+                        // 原实现把 Icon 高度绑到父行高（height: parent.height）且行内默认顶部
+                        // 对齐，缩放动画期间行高/文字高度更新节奏不一致，会导致文字提示位置
+                        // 偏移（偏上/偏下）。这里固定 Icon 尺寸并显式垂直居中，缩放时位置稳定。
+                        width: contentRow.implicitWidth + 20 * lessonsBackend.scaleFactor
                         height: (lessonsBackend.mode === "normal" ? 40 : 46) * lessonsBackend.scaleFactor
 
-                        Row {
+                        RowLayout {
+                            id: contentRow
                             anchors.centerIn: parent
                             spacing: 8 * lessonsBackend.scaleFactor
 
                             Icon {
-                                width: 24 * lessonsBackend.scaleFactor
-                                height: parent.height
+                                Layout.preferredWidth: 24 * lessonsBackend.scaleFactor
+                                Layout.preferredHeight: 24 * lessonsBackend.scaleFactor
+                                Layout.alignment: Qt.AlignVCenter
                                 size: 24 * lessonsBackend.scaleFactor
                                 icon: modelData.icon
                                 color: effectiveDarkTheme ? "#ffffff" : "#000000"
@@ -475,6 +479,8 @@ Item {
                                 font.family: lessonsBackend.fontFamily
                                 font.weight: lessonsBackend.fontWeight
                                 color: effectiveDarkTheme ? "#ffffff" : "#000000"
+                                verticalAlignment: Text.AlignVCenter
+                                Layout.alignment: Qt.AlignVCenter
                                 Behavior on color {
                                     ColorAnimation { duration: 400; easing.type: Easing.OutCubic }
                                 }
