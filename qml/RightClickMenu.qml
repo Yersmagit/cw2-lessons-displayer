@@ -85,7 +85,7 @@ Menu {
 
     // 在指定位置（窗口内坐标）弹出；显示前完成定位与屏幕边缘避让。
     function openAt(x, y) {
-        // RinUI 主题由窗口统一同步（见 FullScreenWindow/SpecialModeWindow.syncRinuiTheme）
+        // RinUI 主题由窗口统一同步（见 FullScreenWindow.syncRinuiTheme）
         var targetX = x
         var targetY = y
 

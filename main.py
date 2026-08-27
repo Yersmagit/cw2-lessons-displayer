@@ -985,7 +985,7 @@ class Plugin(CW2Plugin):
         self._ui_fade_in_started = False
         self._initial_ui_width = 0
 
-        # 特殊模式专用全屏窗口（进入特殊模式后重建，以全新状态置顶显示）
+        # 特殊模式专用全屏窗口（进入特殊模式时创建，保证完全置顶）
         self.special_engine = None
         self.special_window = None
 
@@ -1040,7 +1040,7 @@ class Plugin(CW2Plugin):
     def _ensure_engine_import_paths(self, engine):
         """确保 QML 引擎能解析 `import RinUI`（兼容新版主程序）。
 
-        插件为 FullScreenWindow/SpecialModeWindow 自建独立的 QQmlApplicationEngine，
+        插件为主窗口自建独立的 QQmlApplicationEngine，
         新版主程序不再为插件引擎注入 RinUI 的 QML 导入路径，导致
         `import RinUI` 解析失败、engine.rootObjects() 为空（"无法创建全屏窗口"）。
         这里参考主程序 RinUIWindow.load() 的做法，把 RinUI 包所在目录
@@ -1575,13 +1575,14 @@ class Plugin(CW2Plugin):
 
     def _check_mouse_idle(self):
         """检查鼠标是否空闲，用于特殊模式下自动隐藏光标"""
-        if not self.window or self.backend.mode == "normal":
+        if not self._active_window() or self.backend.mode == "normal":
             return
         pos = QCursor.pos()
         if self._last_mouse_pos == pos:
             self._idle_seconds += 0.5
             if self._idle_seconds >= 4.0 and not self._cursor_hidden:
-                self.window.setCursor(Qt.BlankCursor)
+                # 作用于当前实际显示的窗口（特殊模式下为专用全屏窗口）
+                self._active_window().setCursor(Qt.BlankCursor)
                 self._cursor_hidden = True
         else:
             self._last_mouse_pos = pos
@@ -1635,7 +1636,10 @@ class Plugin(CW2Plugin):
             plugin_logger.debug(f"设置前台窗口失败: {e}")
 
     def _active_window(self):
-        """特殊模式下若专用窗口已显示则使用它，否则使用主窗口"""
+        """特殊模式下若专用窗口已显示则使用它，否则使用主窗口。
+
+        强制置顶/设前台/光标操作等应作用于当前实际显示在屏幕上的窗口。
+        """
         if (self.backend and self.backend.mode != "normal"
                 and self.special_window and self.special_window.isVisible()):
             return self.special_window
@@ -1721,7 +1725,7 @@ class Plugin(CW2Plugin):
             plugin_logger.debug(f"强制置顶失败: {e}")
 
     def _apply_topmost_all(self, topmost):
-        """对插件所有 UI 窗口（主窗口 + 特殊模式窗口）应用/移除置顶。
+        """对插件所有 UI 窗口（主窗口 + 特殊模式专用窗口）应用/移除置顶。
 
         模仿特殊模式 _force_topmost：置顶时除了 SetWindowPos(HWND_TOPMOST) 外，
         还必须 _make_foreground_window 设为系统前台窗口（否则其它前台窗口仍可压住它）。
@@ -1755,11 +1759,9 @@ class Plugin(CW2Plugin):
                     # 关键：模仿特殊模式，设为系统前台窗口（重新取 winId，绕过前台锁定）
                     self._make_foreground_window(int(win.winId()))
                 else:
-                    # 仅正常模式移除；特殊模式窗口需保持置顶
+                    # 仅正常模式移除；特殊模式下需保持置顶
                     if self.backend and self.backend.mode != "normal":
                         continue
-                    if win is not self.window:
-                        continue  # 只处理主窗口（特殊窗口保持置顶）
                     # 图层策略为"始终置顶"（layerTopmost）时保持置顶，
                     # 浮层关闭后不得移除（QML flags 绑定与 _sync_window_layer 兜底都依赖它）
                     if self.backend and self.backend.layerTopmost:
@@ -1776,11 +1778,12 @@ class Plugin(CW2Plugin):
                 plugin_logger.debug(f"应用置顶失败: {e}")
 
     def _prepare_special_window(self):
-        """按钮按下时即开始创建专用全屏窗口（隐藏，暂不显示）
+        """按钮按下时即开始创建专用全屏窗口（隐藏，暂不显示）。
 
-        立即创建隐藏的专用窗口并加载内容（利用旧窗口播放启动动画的时间作为
-        加载时间）；待旧窗口动画播放完成后由 _on_special_animation_finished
-        直接显示（无渐变动画），然后隐藏旧窗口。总是刷新 UI。
+        立即创建隐藏的专用窗口并加载内容（利用主窗口播放启动动画的时间作为
+        加载时间）；待动画播放完成后由 _on_special_animation_finished 直接显示
+        （无渐变动画）。专用窗口以全新状态全屏置顶，保证特殊模式完全置顶
+        （避免复用主窗口时任务栏浮在其上）。
         """
         if not self.backend or self.backend.mode == "normal":
             return
@@ -1791,7 +1794,7 @@ class Plugin(CW2Plugin):
             engine = QQmlApplicationEngine()
             engine.rootContext().setContextProperty("lessonsBackend", self.backend)
             # 新窗口首次加载时抑制高亮课程展开动画（Behavior on width 禁用），
-            # 让新窗口直接以展开状态显示，避免与旧窗口正在播放的展开动画重复
+            # 让新窗口直接以展开状态显示，避免与主窗口正在播放的展开动画重复
             # （只对特殊窗口引擎生效，主引擎无此 context property，动画正常）。
             engine.rootContext().setContextProperty("suppressExpandAnim", True)
             if self.settings_backend:
@@ -1814,8 +1817,8 @@ class Plugin(CW2Plugin):
             win = engine.rootObjects()[0]
             self.special_engine = engine
             self.special_window = win
-            # 保持隐藏，等待旧窗口动画完成信号后直接显示
-            plugin_logger.info("特殊模式专用窗口已创建（隐藏，等待旧窗口动画完成）")
+            # 保持隐藏，等待主窗口动画完成信号后直接显示
+            plugin_logger.info("特殊模式专用窗口已创建（隐藏，等待主窗口动画完成）")
             # 兜底：即使动画完成信号未触发，也确保专用窗口显示并恢复按钮
             QTimer.singleShot(1500, self._on_special_animation_finished)
             QTimer.singleShot(3000, lambda: self.backend.set_switching(False))
@@ -1825,7 +1828,11 @@ class Plugin(CW2Plugin):
             self.backend.set_switching(False)
 
     def _on_special_animation_finished(self):
-        """旧窗口启动动画播放完成：直接显示专用窗口（无渐变动画），然后隐藏旧窗口"""
+        """主窗口启动动画播放完成：直接显示专用窗口（无渐变动画）。
+
+        主窗口保留在其下方可见（已按 mode 绑定渲染为全屏状态），因此无需隐藏
+        主窗口——退出特殊模式时销毁专用窗口即可即时显露胶囊，无延迟、无闪烁。
+        """
         if not self.backend:
             return
         if self.backend.mode == "normal":
@@ -1841,11 +1848,9 @@ class Plugin(CW2Plugin):
             self.special_window.show()
             self.special_window.setWindowState(Qt.WindowFullScreen)
             self._force_topmost()
-            # 隐藏旧窗口
-            if self.window and self.window is not self.special_window:
-                self.window.hide()
+            # 主窗口保持可见在其下方（已渲染就绪），不隐藏
             self.backend.set_switching(False)
-            plugin_logger.info("特殊模式专用窗口已直接显示，旧窗口已隐藏")
+            plugin_logger.info("特殊模式专用窗口已显示（主窗口保留在其下方，可即时退出）")
         except Exception as e:
             plugin_logger.error(f"显示特殊模式窗口失败: {e}")
             self.backend.set_switching(False)
@@ -1869,42 +1874,54 @@ class Plugin(CW2Plugin):
             self.backend.set_switching(False)
 
     def _on_mode_changed(self):
+        """特殊模式切换（混合方案：进入绘制专用窗口、退出只调整标志）。
+
+        进入特殊模式：主窗口按 mode 绑定全屏过渡显示，同时创建专用全屏窗口
+        （全新状态全屏置顶）保证完全置顶；专用窗口显示后覆盖在主窗口上方。
+        退出特殊模式：主窗口在特殊模式期间始终可见（已渲染），销毁专用窗口后
+        主窗口即时显露胶囊，仅调整窗口标志/恢复 mask，无延迟、无新窗口。
+        """
         mode = self.backend.mode
         if mode == "normal":
-            # 销毁特殊模式专用窗口并恢复主窗口显示
-            self._destroy_special_window()
-            # 关键：特殊模式窗口销毁时，其内 tooltip/菜单可能未配对释放 mask 引用
-            # 计数（如鼠标悬停按钮时 tooltip 正显示、窗口被销毁导致 showWidgetMask 永不
-            # 调用），会污染 _mask_hide_refs 导致退出后 mask 永不恢复。切换回正常模式时
-            # 清零引用计数，重建干净的 mask 状态。
+            # 退出特殊模式：主窗口在专用窗口下方已就绪，立即销毁专用窗口并恢复。
+            # 关键：专用窗口销毁时，其内 tooltip/菜单可能未配对释放 mask 引用
+            # 计数（如鼠标悬停按钮时 tooltip 正显示、窗口被销毁导致 showWidgetMask
+            # 永不调用），会污染 _mask_hide_refs 导致退出后 mask 永不恢复。切换回
+            # 正常模式时清零引用计数，重建干净的 mask 状态。
             if self.backend:
                 self.backend._mask_hide_refs = 0
-                # 动画优化状态也一并重置（防止残留导致 mask 不恢复）
                 self.backend._anim_optimize_active = False
                 self.backend._anim_optimize_timer.stop()
-            if self.window:
-                self.window.show()
+            # 立即销毁专用窗口（主窗口已就绪，无需延迟，无闪烁）
+            self._destroy_special_window()
             self.window.setMask(QRegion())
             self._mask_enabled = False
-            # 退出特殊模式：统一应用图层策略（置顶/置底/普通互斥），
-            # 由 _apply_layer_flags 设置 flags + SetWindowPos，避免手动 setFlag 残留。
+            # 统一应用图层策略（置顶/置底/普通互斥），由 _apply_layer_flags 设置
+            # flags + SetWindowPos，避免手动 setFlag 残留。
             if self.backend:
                 self.backend._update_layer_state()
             self._apply_layer_flags()
             if self._cursor_hidden:
-                self.window.setCursor(Qt.ArrowCursor)
+                self._active_window().setCursor(Qt.ArrowCursor)
                 self._cursor_hidden = False
             self._cursor_timer.stop()
-            QTimer.singleShot(400, self._enable_mask_and_update)
+            # 恢复胶囊 mask：uiLoader 有 400ms 平移动画从全屏滑回停靠位，动画期间
+            # 保持 mask 禁用（避免读到动画中间帧/全屏旧值产生错误裁切或大片可点击
+            # 透明区），动画结束后（450ms）再恢复胶囊 mask。
+            QTimer.singleShot(450, self._enable_mask_and_update)
             # 退出特殊模式后若主程序仍处于贴边隐藏，则保持插件主窗口隐藏
             self._edge_hidden = False
             self._sync_hide_visibility()
         else:
-            # 进入特殊模式：特殊窗口为纯色全屏无 mask，清零残留的引用计数
+            # 进入特殊模式：主窗口 QML 按 mode 绑定切换为全屏+纯色背景+胶囊置顶
+            # （过渡显示），同时准备专用全屏窗口保证完全置顶。
             if self.backend:
                 self.backend._mask_hide_refs = 0
                 self.backend._anim_optimize_active = False
                 self.backend._anim_optimize_timer.stop()
+            # 若主程序贴边隐藏导致窗口被隐藏，进入特殊模式时须重新显示
+            if self.window and not self.window.isVisible():
+                self.window.show()
             self.window.setMask(QRegion())
             self._mask_enabled = True
             self.window.setFlag(Qt.WindowStaysOnTopHint, True)
@@ -1931,14 +1948,13 @@ class Plugin(CW2Plugin):
             # 是前台，系统会让任务栏浮在置顶窗口之上（100%复现的露出任务栏问题）。
             self._make_foreground_window(int(self.window.winId()))
 
-            # 延迟再次强制置顶：等待 QML 全屏过渡/窗口状态切换完成后再
-            # 重新置顶，确保窗口完全覆盖任务栏（修复偶发露出任务栏问题）。
-            # _force_topmost 内部会校验仍处于特殊模式，退出后自动忽略。
+            # 延迟再次强制置顶：等待 QML 全屏过渡/窗口状态切换完成后再重新置顶，
+            # 确保窗口完全覆盖任务栏（修复偶发露出任务栏问题）。
             QTimer.singleShot(400, self._force_topmost)
             QTimer.singleShot(1200, self._force_topmost)
 
-            # 按钮按下即开始创建隐藏的专用全屏窗口（利用旧窗口启动动画时间
-            # 作为加载时间），旧窗口动画完成后由信号驱动其直接显示并隐藏旧窗口。
+            # 按钮按下即开始创建隐藏的专用全屏窗口（利用主窗口启动动画时间
+            # 作为加载时间），动画完成后由信号驱动其显示，保证完全置顶。
             self._prepare_special_window()
 
     def on_unload(self):

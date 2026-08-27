@@ -67,10 +67,10 @@ Window {
         objectName: "uiLoader"
         source: "LessonsDisplay.qml"
         asynchronous: false
-        // 根据模式动态绑定位置和宽度
+        // 根据模式动态绑定位置和宽度（单窗口直接过渡：特殊模式时胶囊铺满全屏）
         // 注意：特殊模式宽度用 root.width（Window 本身）而非 parent.width——parent 是
-        // Window 的 contentItem（QQuickRootItem），窗口隐藏时其宽度为 0，会导致
-        // LessonsDisplay 布局错乱（见 SpecialModeWindow 注释）。
+        // Window 的 contentItem（QQuickRootItem），其宽度可能为 0，会导致
+        // LessonsDisplay 布局错乱。
         x: lessonsBackend.mode === "normal" ? lessonsBackend.uiX : 4
         y: lessonsBackend.mode === "normal" ? lessonsBackend.uiY : 4
         width: lessonsBackend.mode === "normal" ? lessonsBackend.uiWidth : root.width - 8
@@ -155,7 +155,7 @@ Window {
     }
 
     // 特殊模式启动动画（背景淡入、胶囊展开等，时长 400ms）播放完成后发出信号，
-    // 通知已隐藏准备好的专用全屏窗口直接显示（无渐变动画），然后隐藏本窗口。
+    // 通知已准备好的专用全屏窗口直接显示（无渐变动画），覆盖在主窗口上方。
     Timer {
         id: specialAnimTimer
         interval: 400
