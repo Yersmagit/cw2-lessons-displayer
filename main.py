@@ -970,9 +970,13 @@ class Plugin(CW2Plugin):
         self._layer_timer = None
         self._width_timer = None
         self._scroll_timer = None
+        self._theme_timer = None
         self._configs = None
         self._mask_enabled = True
         self.settings_backend = None
+        # 日志文件 handler id（on_unload 时移除以释放 log/ 目录文件句柄，否则 Windows
+        # 下主程序卸载/删除插件目录会因文件被占用失败）
+        self._log_handler_id = None
         # 弹出浮层（右键菜单/设置页）置顶引用计数：>0 时所有插件窗口持续置顶
         self._topmost_refs = 0
 
@@ -1004,7 +1008,8 @@ class Plugin(CW2Plugin):
             log_dir = os.path.join(self.PATH, "log")
             os.makedirs(log_dir, exist_ok=True)
             log_file = os.path.join(log_dir, "lessons-displayer.log")
-            logger.add(
+            # 保存 handler id，供 on_unload 时 logger.remove(id) 释放日志文件句柄
+            self._log_handler_id = logger.add(
                 log_file,
                 rotation="1 MB",
                 retention="7 days",
@@ -1015,7 +1020,22 @@ class Plugin(CW2Plugin):
             )
             plugin_logger.debug(f"日志文件已创建: {log_file}")
         except Exception as e:
+            self._log_handler_id = None
             plugin_logger.error(f"设置插件日志失败: {e}")
+
+    def _remove_logging(self):
+        """移除插件日志处理器，释放 log/ 目录文件句柄。
+
+        不释放的话，Windows 上主程序卸载/删除插件目录时会因日志文件被占用
+        （PermissionError: 另一个程序正在使用此文件）而失败。
+        """
+        try:
+            if getattr(self, "_log_handler_id", None) is not None:
+                logger.remove(self._log_handler_id)
+                self._log_handler_id = None
+                plugin_logger.debug("已移除插件日志处理器")
+        except Exception as e:
+            plugin_logger.debug(f"移除插件日志处理器失败: {e}")
 
     def _ensure_engine_import_paths(self, engine):
         """确保 QML 引擎能解析 `import RinUI`（兼容新版主程序）。
@@ -1922,6 +1942,11 @@ class Plugin(CW2Plugin):
             self._prepare_special_window()
 
     def on_unload(self):
+        # 卸载消息需在移除日志处理器前打印（否则写不进文件）
+        plugin_logger.info("今日课程插件卸载")
+        # 释放日志文件句柄（关键：否则 Windows 下主程序删除插件目录会失败）
+        self._remove_logging()
+
         self._destroy_special_window()
         if self._cursor_timer:
             self._cursor_timer.stop()
@@ -1977,12 +2002,61 @@ class Plugin(CW2Plugin):
                 self.ui_loader.heightChanged.disconnect(self._update_mask)
             except:
                 pass
+        # 断开 on_load 里连接、但此前未断开的主程序/后端信号，避免卸载后仍收到回调，
+        # 且信号持有对插件对象/后端的强引用导致插件无法被释放
+        try:
+            self.api.runtime.updated.disconnect(self.on_runtime_updated)
+        except Exception:
+            pass
+        try:
+            self.api.theme.changed.disconnect(self.on_theme_changed)
+        except Exception:
+            pass
+        if self.backend:
+            try:
+                self.backend.modeChanged.disconnect(self._on_mode_changed)
+            except Exception:
+                pass
+            try:
+                self.backend.positionChanged.disconnect(self._update_mask)
+            except Exception:
+                pass
+            try:
+                self.backend.widthChanged.disconnect(self._update_mask)
+            except Exception:
+                pass
         if self.window:
             self.window.close()
             self.window.deleteLater()
+            self.window = None
         if self.engine:
             self.engine.deleteLater()
-        plugin_logger.info("今日课程插件卸载")
+            self.engine = None
+        # 释放后端 QObject（引擎已删除，QML context property 引用随之释放）
+        if self.settings_backend:
+            try:
+                self.settings_backend.deleteLater()
+            except Exception:
+                pass
+            self.settings_backend = None
+        if self.backend:
+            try:
+                self.backend.deleteLater()
+            except Exception:
+                pass
+            self.backend = None
+        # super().on_load() 会把本插件注册进 PluginBackendBridge（并设为 CppOwnership），
+        # 主程序没有提供注销接口，这里直接从注册表移除，避免主程序长期强引用本插件对象
+        try:
+            from src.core.plugin.bridge import PluginBackendBridge
+            PluginBackendBridge._registry.pop(self.meta.get("id"), None)
+        except Exception:
+            pass
+        # 对齐基类卸载契约
+        try:
+            super().on_unload()
+        except Exception:
+            pass
 
     def on_runtime_updated(self):
         if self.backend:
