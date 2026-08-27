@@ -23,11 +23,10 @@ ColumnLayout {
         description: "熄屏/白板模式下高亮课程右侧倒计时的显示字号"
 
         ComboBox {
-            // 用 syncing 标记区分"程序化同步"与"用户变更"，不依赖 focus：
-            // RinUI ComboBox 的下拉指示器是独立 ToolButton（focusPolicy:NoFocus），
-            // 点击指示器打开菜单选择时 ComboBox 本体可能没有 focus，导致 if(focus)
-            // 不写回、关闭设置重开后该项回退为默认值。
-            property bool syncing: false
+            // 用 syncing 标记区分"程序化同步"与"用户变更"，不依赖 focus。
+            // ⚠️ syncing 必须初始为 true：模型填充时 currentIndex 会从 -1 自动变 0，
+            // 若 syncing 为 false 会在此刻把 index 0 的值误写回（覆盖已保存的设置）。
+            property bool syncing: true
             model: ListModel {
                 ListElement { text: "默认字号"; value: "default" }
                 ListElement { text: "大字号"; value: "large" }
@@ -40,7 +39,6 @@ ColumnLayout {
             }
 
             Component.onCompleted: {
-                syncing = true
                 for (var i = 0; i < model.count; i++) {
                     if (model.get(i).value === settingsBackend.getString("countdown_style")) {
                         currentIndex = i
@@ -73,9 +71,8 @@ ColumnLayout {
                 spacing: 8
 
                 SpinBox {
-                    // 同 ComboBox：用 syncing 标记区分程序化同步与用户变更，
-                    // 避免 if(focus) 在无焦点交互（如直接输入后失焦）时不写回
-                    property bool syncing: false
+                    // 同 ComboBox：syncing 初始为 true，避免初始化期 value 赋值被误写回
+                    property bool syncing: true
                     from: 0
                     to: 1000
                     stepSize: 1
@@ -87,16 +84,14 @@ ColumnLayout {
                     }
 
                     Component.onCompleted: {
-                        syncing = true
                         value = settingsBackend.getInt("auto_close_delay")
                         syncing = false
                     }
                 }
 
                 ComboBox {
-                    // 同倒计时样式 ComboBox：用 syncing 标记区分程序化同步与用户变更，
-                    // 修复点击指示器选择后 if(focus) 不写回、重开后单位回退为"分"的问题
-                    property bool syncing: false
+                    // 同倒计时样式 ComboBox：syncing 初始为 true，防止初始化误写回
+                    property bool syncing: true
                     model: ListModel {
                         ListElement { text: "分"; value: "min" }
                         ListElement { text: "秒"; value: "sec" }
@@ -109,7 +104,6 @@ ColumnLayout {
                     }
 
                     Component.onCompleted: {
-                        syncing = true
                         for (var i = 0; i < model.count; i++) {
                             if (model.get(i).value === settingsBackend.getString("auto_close_unit")) {
                                 currentIndex = i
