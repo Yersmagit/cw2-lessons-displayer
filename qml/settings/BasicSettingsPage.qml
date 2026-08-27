@@ -25,6 +25,11 @@ ColumnLayout {
         description: "控制本插件小组件的窗口层级"
 
         ComboBox {
+            // 用 syncing 标记区分"程序化同步"与"用户变更"，不依赖 focus：
+            // RinUI ComboBox 的下拉指示器是独立 ToolButton（focusPolicy:NoFocus），
+            // 点击指示器打开菜单选择时 ComboBox 本体可能没有 focus，导致 if(focus)
+            // 不写回、关闭设置重开后该项回退为默认值。
+            property bool syncing: false
             model: ListModel {
                 ListElement { text: "跟随软件设置"; value: "follow" }
                 ListElement { text: "始终置顶"; value: "top" }
@@ -32,16 +37,20 @@ ColumnLayout {
             }
             textRole: "text"
 
-            // 与主程序一致：仅用户交互（focus）时写回，程序化同步不写回
-            onCurrentIndexChanged: if (focus) settingsBackend.setString("widgets_layer", model.get(currentIndex).value)
+            onCurrentIndexChanged: {
+                if (!syncing)
+                    settingsBackend.setString("widgets_layer", model.get(currentIndex).value)
+            }
 
             Component.onCompleted: {
+                syncing = true
                 for (var i = 0; i < model.count; i++) {
                     if (model.get(i).value === settingsBackend.getString("widgets_layer")) {
                         currentIndex = i
                         break
                     }
                 }
+                syncing = false
             }
         }
     }
