@@ -122,6 +122,7 @@ Item {
         // ========== 课程列表 ==========
         ListView {
             id: lessonsListView
+            objectName: "lessonsListView"
             orientation: ListView.Horizontal
             spacing: 5 * lessonsBackend.scaleFactor
             clip: true
@@ -137,11 +138,51 @@ Item {
             // 模型改为 displayItems，包含课程和分隔符
             model: lessonsBackend.displayItems
 
+            // 预实例化视口外的 delegate，保证 itemAtIndex(index) 对任意 index 都能
+            // 返回真实几何（否则远处 delegate 未实例化：itemAtIndex 返回 null，
+            // positionViewAtIndex 用估算返回错误 contentX，滚到错误位置/滚过头回弹）。
+            // 课程列表项数有限（通常 < 30），全实例化开销可忽略。
+            displayMarginBeginning: 10000
+            displayMarginEnd: 10000
+
             // 自动滚动相关属性
             property bool autoScrollEnabled: true
             property bool userInteracted: false
             property bool hovered: false
             property bool scrollBarVisible: false
+            // 自动滚动防抖：上次滚动目标索引/位置、是否动画进行中。
+            // 防止同一目标被每秒滚动请求反复打断/重启动画（动画永远无法完成，
+            // contentX 原地抖动=抽搐，高亮到不了左20%）。
+            property int lastScrollIndex: -1
+            property real lastTargetX: -1
+            property bool scrollAnimating: false
+
+            // 视图宽度 / 内容宽度变化 → 目标“左 20%”位置会变，重置锁定让下次
+            // 滚动重新权威定位（避免沿用旧位置导致高亮不在左 20% / 露出空白）。
+            // 宽度变化（尤其从“放得下”缩到“放不下”）的瞬态里，ListView 虚拟化
+            // 布局尚未完成，delegate 可能未实例化（itemAtIndex 返回 null），立刻
+            // 滚动会滚到错误位置。故清空锁定，并用 Qt.callLater 延迟到布局稳定后
+            // 再权威定位，保证一次到位。
+            onWidthChanged: {
+                lastScrollIndex = -1
+                lastTargetX = -1
+                Qt.callLater(function() { relayoutScroll() })
+            }
+            onContentWidthChanged: {
+                lastScrollIndex = -1
+                lastTargetX = -1
+                Qt.callLater(function() { relayoutScroll() })
+            }
+
+            // 宽度/内容宽度变化后延迟重定位：放得下则 contentX 归零（居中），
+            // 放不下则重新滚动到当前高亮课程。
+            function relayoutScroll() {
+                if (contentWidth <= width) {
+                    if (contentX !== 0) contentX = 0
+                } else if (autoScrollEnabled) {
+                    scrollToCurrentLesson()
+                }
+            }
 
             // 滚动条隐藏延迟定时器
             Timer {
@@ -164,6 +205,10 @@ Item {
             function pauseAutoScroll() {
                 autoScrollEnabled = false
                 userInteracted = true
+                // 用户操作列表滚动（拖拽/滚动条/滚轮）后，延迟 4 秒再恢复自动滚动。
+                // 统一重启恢复定时器，确保一定在 4 秒后恢复（避免某路径遗漏 restart
+                // 而永久卡死）。
+                userInteractionTimer.restart()
             }
 
             Timer {
@@ -181,6 +226,9 @@ Item {
             onMovementStarted: {
                 pauseAutoScroll()
                 updateScrollBarVisible(true)
+                // 用户拖拽开始：立即停止自动滚动动画，避免与用户操作抢 contentX
+                // （否则用户刚滚到的位置会被自动滚动动画拉走/打断）。
+                if (scrollAnimation.running) scrollAnimation.stop()
             }
 
             onMovementEnded: {
@@ -225,6 +273,9 @@ Item {
             // 委托：根据类型渲染课程或分隔符
             delegate: Loader {
                 id: delegateLoader
+                // 暴露自身在模型中的 index，便于 computeTargetX 通过 contentItem 子项
+                // 定位目标项的真实几何（也便于测试/调试）。
+                property int itemIndex: index
                 sourceComponent: {
                     if (modelData.type === "separator") {
                         return separatorComponent
@@ -521,19 +572,81 @@ Item {
                 }
             }
 
-            // 滚动到指定索引（左20%位置，带动画）
+            // 用 itemAtIndex(index).x 计算目标 contentX：displayMargin 保证 delegate
+            // 全实例化，x 为真实绝对位置。不依赖 positionViewAtIndex——它对 Loader+
+            // 内容自适应宽度的远处/末尾项会返回错误 contentX（超过 maxX 或负数），
+            // 导致滚过头回弹。返回目标项应位于的 contentX：左 20%；末尾项贴右缘
+            // （maxX）；开头项贴左缘（0）。目标项未实例化（布局未稳定）返回 NaN，
+            // 让调用方跳过本次滚动、延迟重试。
+            function computeTargetX(index) {
+                forceLayout()
+                var maxX = contentWidth - width
+                if (maxX <= 0) return -1
+                var it = itemAtIndex(index)
+                if (!it) return NaN  // delegate 尚未实例化，布局未稳定
+                var itemX = it.x     // 目标项在内容坐标系中的绝对位置
+                var target = itemX - 0.2 * width
+                if (target <= 0) return 0
+                if (target >= maxX) return maxX
+                return target
+            }
+
+            // 滚动到指定索引（左20%位置，平滑动画）。
+            // 新目标**一律**用 computeTargetX（itemAtIndex 真实几何，正确处理边界），
+            // 恢复原位后动画到目标位置；锁定目标位置，同索引每秒请求沿用锁定值
+            // （不重算、不跳变）；动画结束后由 finalizeScroll 精确对齐，修正滚过头/
+            // 没滚到头的偏差。
             function scrollToIndex(index) {
                 forceLayout()
                 if (!autoScrollEnabled) return
-                if (contentWidth <= width) return
-                var item = itemAtIndex(index)
-                if (!item) return
-                var targetX = item.x - width * 0.2
-                targetX = Math.max(0, Math.min(targetX, contentWidth - width))
-                if (Math.abs(contentX - targetX) < 1) return
+                if (contentWidth <= width) {
+                    // 内容放得下：居中显示，contentX 恒为 0（清除宽度变化瞬态
+                    // 可能残留的滚动偏移，避免课程整体偏左、右侧露空白）。
+                    if (contentX !== 0) contentX = 0
+                    return
+                }
+                // 防抖：动画中同一目标不打断（避免每秒请求反复 stop+start 导致抖动）
+                if (scrollAnimating && lastScrollIndex === index) return
+                if (lastScrollIndex === index && lastTargetX >= 0) {
+                    // 同索引：已到位则不动；被手动滚动偏离则平滑动画滚回锁定目标
+                    if (Math.abs(contentX - lastTargetX) < 2) return
+                    scrollAnimation.to = lastTargetX
+                    scrollAnimation.start()
+                    return
+                }
+                // 新目标：用真实几何计算目标位置，交给动画平滑滚动
+                var targetX = computeTargetX(index)
+                if (isNaN(targetX)) {
+                    // 布局未稳定：清空锁定并跳过本次，绝不滚到错误位置；
+                    // 等 Qt.callLater / 下一次每秒请求重试。
+                    lastScrollIndex = -1
+                    lastTargetX = -1
+                    return
+                }
+                if (targetX < 0) {
+                    lastScrollIndex = index
+                    return
+                }
+                lastScrollIndex = index
+                lastTargetX = targetX
+                if (Math.abs(contentX - targetX) < 2) return
                 if (scrollAnimation.running) scrollAnimation.stop()
+                scrollAnimating = true
                 scrollAnimation.to = targetX
                 scrollAnimation.start()
+            }
+
+            // 动画结束后精确对齐：重新用 itemAtIndex 真实几何计算目标位置，
+            // 修正动画过程中视图宽度/内容宽度变化导致的滚过头/没滚到头的偏差。
+            function finalizeScroll() {
+                if (lastScrollIndex < 0) return
+                var targetX = computeTargetX(lastScrollIndex)
+                if (isNaN(targetX)) return  // 布局未稳定：保持现状，等下一次重试
+                if (targetX < 0) return
+                if (Math.abs(contentX - targetX) > 1) {
+                    contentX = targetX
+                }
+                lastTargetX = targetX
             }
 
             // 内部滚动到当前高亮课程
@@ -556,6 +669,13 @@ Item {
                 property: "contentX"
                 duration: 400
                 easing.type: Easing.OutCubic
+                // 动画结束/停止时复位防抖标志，并精确对齐修正边界偏差
+                onRunningChanged: {
+                    if (!running) {
+                        lessonsListView.scrollAnimating = false
+                        lessonsListView.finalizeScroll()
+                    }
+                }
             }
 
             // 监听课程变化，立即滚动（如果允许）
@@ -568,6 +688,8 @@ Item {
                     if (lessonsListView.autoScrollEnabled) lessonsListView.scrollToCurrentLesson()
                 }
                 function onLessonsUpdated() {
+                    // 不重置锁定：高亮课程变化会自然以新索引触发重新定位；
+                    // 若每次课程数据更新都重置，会频繁重新定位导致闪现。
                     if (lessonsListView.autoScrollEnabled) lessonsListView.scrollToCurrentLesson()
                 }
             }
