@@ -68,6 +68,7 @@ class LessonsBackend(QObject):
     layerChanged = Signal()
     countdownStyleChanged = Signal()
     remainingTextChanged = Signal()
+    widgetRadiusChanged = Signal()
 
     def __init__(self, plugin):
         super().__init__()
@@ -126,6 +127,10 @@ class LessonsBackend(QObject):
         self._scale_factor = 1.0
         self._update_scale_factor()
 
+        # 初始化外围圆角半径（跟随主程序 widget_corner_radius 配置换算）
+        self._widget_radius = 27.0
+        self._update_widget_radius()
+
 
     def set_ui_opacity(self, opacity):
         if opacity != self._opacity:
@@ -153,6 +158,27 @@ class LessonsBackend(QObject):
         except Exception:
             self._scale_factor = 1.0
         self.scaleFactorChanged.emit()
+
+    def _update_widget_radius(self):
+        """跟随主程序"小组件圆角半径"配置（preferences.widget_corner_radius）换算本 UI 外围圆角。
+
+        算法：主程序半径 >16 → 本 UI 固定 27；0~16 → 按 0~16 等比缩放到 0~27
+        （即 min(27, r*27/16)，恰好 16 时两分支结果一致均为 27）。
+        旧版主程序无该配置（读不到）时固定使用 27。
+        """
+        try:
+            configs = self.plugin._configs
+            if configs:
+                r = getattr(configs.preferences, 'widget_corner_radius', None)
+                if r is not None:
+                    self._widget_radius = min(27.0, float(r) * 27.0 / 16.0)
+                else:
+                    self._widget_radius = 27.0
+            else:
+                self._widget_radius = 27.0
+        except Exception:
+            self._widget_radius = 27.0
+        self.widgetRadiusChanged.emit()
 
     def _update_font(self):
         """从配置更新字体和字重"""
@@ -815,6 +841,11 @@ class LessonsBackend(QObject):
     def scaleFactor(self):
         return self._scale_factor
 
+    @Property(float, notify=widgetRadiusChanged)
+    def widgetRadius(self):
+        """外围胶囊圆角半径（已按主程序 widget_corner_radius 换算，未乘缩放因子）"""
+        return self._widget_radius
+
     def set_switching(self, value):
         """设置窗口切换标记（切换期间禁用按钮，防止误操作）"""
         if value != self._switching:
@@ -1193,6 +1224,8 @@ class Plugin(CW2Plugin):
             self.backend._update_font()
             self.backend._update_bg_opacity()
             self.backend._update_scale_factor()
+            # 主程序"小组件圆角半径"配置变化时刷新外围圆角
+            self.backend._update_widget_radius()
             # 主程序 widgets_layer 配置变化（跟随软件设置）时刷新图层状态
             self.backend._update_layer_state()
 

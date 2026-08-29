@@ -36,7 +36,8 @@ Item {
         : Qt.rgba(255/255, 255/255, 255/255, 1)
 
     readonly property real borderWidth: 1.5 * lessonsBackend.scaleFactor
-    readonly property real radius: 27 * lessonsBackend.scaleFactor
+    // 外围胶囊圆角：跟随主程序"小组件圆角半径"配置（lessonsBackend.widgetRadius 已换算）
+    readonly property real radius: lessonsBackend.widgetRadius * lessonsBackend.scaleFactor
 
     // 背景矩形（纯色，无边框）—— 添加颜色动画
     Rectangle {
