@@ -9,7 +9,7 @@ import json
 import ctypes
 import darkdetect
 from loguru import logger
-from PySide6.QtCore import QObject, QUrl, Slot, Property, Signal, QTimer
+from PySide6.QtCore import QObject, QUrl, Slot, Property, Signal, QTimer, QEvent
 from PySide6.QtGui import QGuiApplication, QScreen, QRegion, QCursor
 from PySide6.QtQml import QQmlApplicationEngine
 from ClassWidgets.SDK import CW2Plugin
@@ -1157,6 +1157,9 @@ class Plugin(CW2Plugin):
             self.window.setFlag(Qt.FramelessWindowHint, True)
             self.window.setColor(Qt.transparent)
 
+            # 事件过滤器：特殊模式下鼠标按下/移动时恢复隐藏的光标
+            self.window.installEventFilter(self)
+
             self.window.uiReady.connect(self._on_ui_ready)
             plugin_logger.debug("已连接 uiReady 信号")
 
@@ -1631,8 +1634,31 @@ class Plugin(CW2Plugin):
             self._last_mouse_pos = pos
             self._idle_seconds = 0
             if self._cursor_hidden:
-                self.window.setCursor(Qt.ArrowCursor)
+                # 恢复光标同样作用于当前实际显示的窗口（隐藏时设在专用窗口，
+                # 若恢复作用在主窗口，专用窗口仍保持 BlankCursor → 移动鼠标无光标）
+                self._active_window().setCursor(Qt.ArrowCursor)
                 self._cursor_hidden = False
+
+    def eventFilter(self, obj, event):
+        """特殊模式下鼠标按下/移动时恢复隐藏的光标。
+
+        移动恢复主要由 _check_mouse_idle 的位置检测完成，这里兜底处理
+        "点击不改变位置"的情况（鼠标按下立即恢复，无需等到下一次移动检测）。
+        """
+        if self._cursor_hidden:
+            try:
+                etype = event.type()
+                if etype == QEvent.MouseButtonPress or etype == QEvent.MouseMove:
+                    win = self._active_window()
+                    if win:
+                        win.setCursor(Qt.ArrowCursor)
+                    self._cursor_hidden = False
+                    self._last_mouse_pos = QCursor.pos()
+                    self._idle_seconds = 0
+            except Exception:
+                pass
+        # QObject.eventFilter 默认返回 False（不拦截事件，继续向目标分发）
+        return False
 
     def _enable_mask_and_update(self):
         """延迟后恢复 mask 更新。
@@ -1860,6 +1886,8 @@ class Plugin(CW2Plugin):
             win = engine.rootObjects()[0]
             self.special_engine = engine
             self.special_window = win
+            # 事件过滤器：特殊模式下鼠标按下/移动时恢复隐藏的光标
+            win.installEventFilter(self)
             # 保持隐藏，等待主窗口动画完成信号后直接显示
             plugin_logger.info("特殊模式专用窗口已创建（隐藏，等待主窗口动画完成）")
             # 兜底：即使动画完成信号未触发，也确保专用窗口显示并恢复按钮
@@ -2007,6 +2035,11 @@ class Plugin(CW2Plugin):
         self._remove_logging()
 
         self._destroy_special_window()
+        if self.window:
+            try:
+                self.window.removeEventFilter(self)
+            except Exception:
+                pass
         if self._cursor_timer:
             self._cursor_timer.stop()
             self._cursor_timer.deleteLater()
