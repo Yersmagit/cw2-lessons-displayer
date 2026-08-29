@@ -769,7 +769,7 @@ Item {
             anchors.centerIn: parent
             text: lessonsBackend.mode === "whiteboard" ? qsTr("熄屏模式") : qsTr("白板模式")
             font.pixelSize: 12 * lessonsBackend.scaleFactor
-            font.family: lessonsBackend.fontFamily
+            font.family: Qt.application.font.family  // 提示文字用系统字体
             color: effectiveDarkTheme ? "#ffffff" : "#000000"
         }
     }
@@ -814,7 +814,7 @@ Item {
             anchors.centerIn: parent
             text: lessonsBackend.mode === "normal" ? qsTr("熄屏模式") : qsTr("退出")
             font.pixelSize: 12 * lessonsBackend.scaleFactor
-            font.family: lessonsBackend.fontFamily
+            font.family: Qt.application.font.family  // 提示文字用系统字体
             color: effectiveDarkTheme ? "#ffffff" : "#000000"
         }
     }
