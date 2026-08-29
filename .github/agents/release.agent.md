@@ -15,6 +15,7 @@ user-invocable: true
 - 版本号必须是标准 `x.y.z` 三段式；若当前版本含预发布后缀（如 `0.2.4-alpha`）或无法确定新版本号，停下来向用户说明，不要擅自 +1。
 - 目标 tag 已存在（本地或远端）时不要覆盖，停下来报告。
 - 若 `CWPT_TOKEN` secret 未在 GitHub 仓库配置（发布到插件广场必需），发布会成功但插件广场不会更新——此时提醒用户检查 secret。
+- **不更新已安装副本**：发版只负责源码版本号、提交、打 tag、推送与线上核对，**不同步/不复制任何文件到本地已安装副本**（如 H 盘 `h:\ClassWidgets-2\...` 等路径）；H 盘未挂载或路径不存在时不要尝试同步或报错，直接忽略。
 
 ## 背景（2026-08 后发版会做什么，供发版后核对）
 - CI 会自动：`cw-plugin-pack` 打包（.cwplugin + .zip）→ `cw-plugin-publish` 发布到插件广场（需要 GitHub Actions secret `CWPT_TOKEN`，从插件广场控制台 https://plaza.cw.rinlit.cn/console 获取）→ `git-cliff --config .git-cliff.toml --latest` 生成**只含当前最新版本**、符合配置模板的 release 文档 → 创建 GitHub Release。**git-cliff 必须用 `--latest`**（不是 `--tag`——那会从第一个 tag 生成全部历史）。
@@ -40,7 +41,6 @@ user-invocable: true
 1. **GitHub Actions 运行**：推送 tag 后约 2~4 分钟，在仓库 Actions 页应看到 `Release Plugin` 运行成功（`Publish to plugin registry` 步骤必须 success，否则插件广场不更新）。
 2. **GitHub Release 文档格式**：用 API 查询 `https://api.github.com/repos/Yersmagit/cw2-lessons-displayer/releases/tags/v{new_ver}` 的 `body`，应看到 `## 插件新版本 (v{new_ver})` 标题 + 折叠分组 + `**完整 Changelog**: 版本对比 ...` 行（这是 `.git-cliff.toml` 配置的格式）。若看到 `## [{ver}] - 日期` 默认格式，说明 `.git-cliff.toml` 在 CI 中被误删或 git-cliff 调用方式错误，需排查 release.yml。
 3. **插件广场版本**：用 API 查询 `https://plaza.cw.rinlit.cn/api/plugins/com.yersmagit.lessonsdisplayer` 的 `updated_at`，若与本次发布时刻吻合即发布成功。**用 API 验证即可，不要截图**（省 token）。
-4. **同步已安装副本**：把更新后的 `cwplugin.json` 复制到已安装副本 `h:\ClassWidgets-2\Class Widgets 2.0.0.dev20260517-alpha\plugins\com.yersmagit.lessonsdisplayer\cwplugin.json`（用 Get-FileHash 验证一致），避免本地插件版本显示落后。
 
 ## 输出格式
 完成后返回简要报告：
@@ -49,4 +49,4 @@ user-invocable: true
 - 提交信息与提交 hash；
 - 创建的 tag 名；
 - 推送结果（master 分支 + tag 均推送成功），并提示“已触发 GitHub Action 自动发版，可在 Actions 页查看进度”；
-- 发版后核对结果（Actions 是否成功、Release 文档格式、插件广场版本、已安装副本是否已同步）。
+- 发版后核对结果（Actions 是否成功、Release 文档格式、插件广场版本）。
