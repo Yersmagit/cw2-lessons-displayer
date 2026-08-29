@@ -15,6 +15,16 @@ from PySide6.QtQml import QQmlApplicationEngine
 from ClassWidgets.SDK import CW2Plugin
 from PySide6.QtCore import Qt
 
+# 跟随主程序配置的深浅色主题：RinUI ThemeManager 是进程级单例（新版主程序捆绑）。
+# 一般模式深浅色优先用主程序设置（Light/Dark/Auto），Auto 时由 RinUI 跟随系统；
+# 旧版主程序无 RinUI 时回退 darkdetect 轮询系统主题。
+try:
+    from RinUI.core.theme import ThemeManager as RinThemeManager
+    _HAS_RIN_THEME = True
+except Exception:
+    RinThemeManager = None
+    _HAS_RIN_THEME = False
+
 plugin_logger = logger.bind(plugin="lessons-displayer")
 
 # 默认宽度常量
@@ -1085,13 +1095,15 @@ class Plugin(CW2Plugin):
 
         self._update_subjects_map()
 
-        try:
-            sys_theme = darkdetect.theme()
-            self.is_dark_theme = (sys_theme == "Dark")
-            plugin_logger.debug(f"通过 darkdetect 获取初始主题: {sys_theme}, 深色模式: {self.is_dark_theme}")
-        except Exception as e:
-            self.is_dark_theme = False
-            plugin_logger.debug(f"无法获取系统主题，使用默认浅色，错误: {e}")
+        # 深浅色主题：优先跟随主程序配置（RinUI ThemeManager），回退系统主题
+        self._init_theme()
+        if _HAS_RIN_THEME:
+            try:
+                # 主程序设置切换深浅色主题时同步（Light/Dark/Auto）
+                RinThemeManager().themeChanged.connect(self._on_rin_theme_changed)
+                plugin_logger.debug("已连接 RinUI 主题变化信号")
+            except Exception as e:
+                plugin_logger.debug(f"连接 RinUI 主题信号失败: {e}")
 
         self._configs = self.api._app.configs
         self._configs.configChanged.connect(self._on_config_changed)
@@ -1380,7 +1392,38 @@ class Plugin(CW2Plugin):
         self._theme_timer.start(1000)
         plugin_logger.debug("已启动主题轮询定时器")
 
+    def _init_theme(self):
+        """初始化深浅色：优先跟随主程序配置（RinUI ThemeManager），回退系统主题。"""
+        if _HAS_RIN_THEME:
+            try:
+                rin_theme = RinThemeManager().get_theme()  # "Light"/"Dark"（Auto 时已解析）
+                self.is_dark_theme = (rin_theme == "Dark")
+                plugin_logger.debug(f"跟随主程序主题: {rin_theme}, 深色模式: {self.is_dark_theme}")
+                return
+            except Exception as e:
+                plugin_logger.debug(f"读取主程序主题失败，回退系统主题，错误: {e}")
+        try:
+            sys_theme = darkdetect.theme()
+            self.is_dark_theme = (sys_theme == "Dark")
+            plugin_logger.debug(f"通过 darkdetect 获取初始主题: {sys_theme}, 深色模式: {self.is_dark_theme}")
+        except Exception as e:
+            self.is_dark_theme = False
+            plugin_logger.debug(f"无法获取系统主题，使用默认浅色，错误: {e}")
+
+    def _on_rin_theme_changed(self, actual_theme):
+        """主程序深浅色主题变化（RinUI ThemeManager 信号，参数为实际主题 Light/Dark）"""
+        is_dark = (actual_theme == "Dark")
+        if is_dark != self.is_dark_theme:
+            plugin_logger.debug(f"主程序主题变化: {actual_theme}, 深色模式: {is_dark}")
+            self.is_dark_theme = is_dark
+            if self.backend:
+                self.backend.set_dark_theme(is_dark)
+
     def _check_system_theme(self):
+        if _HAS_RIN_THEME:
+            # 已跟随主程序主题（RinUI 在 Auto 模式下自行监听系统主题并 emit 信号），
+            # 无需再每秒轮询系统主题，避免覆盖主程序设置的 Light/Dark。
+            return
         try:
             sys_theme = darkdetect.theme()
             is_dark = (sys_theme == "Dark")
@@ -2028,6 +2071,12 @@ class Plugin(CW2Plugin):
             self.api.theme.changed.disconnect(self.on_theme_changed)
         except Exception:
             pass
+        if _HAS_RIN_THEME:
+            try:
+                # 断开 RinUI 主题信号，避免卸载后仍收到回调/被信号强引用
+                RinThemeManager().themeChanged.disconnect(self._on_rin_theme_changed)
+            except Exception:
+                pass
         if self.backend:
             try:
                 self.backend.modeChanged.disconnect(self._on_mode_changed)
@@ -2080,6 +2129,16 @@ class Plugin(CW2Plugin):
 
     def on_theme_changed(self, theme_id):
         plugin_logger.debug(f"on_theme_changed 被调用，传入 theme_id: {theme_id}")
+        # 主程序主题（包）切换时同步当前深浅色（Auto 模式跟随系统）
+        if _HAS_RIN_THEME:
+            try:
+                is_dark = (RinThemeManager().get_theme() == "Dark")
+                if is_dark != self.is_dark_theme:
+                    self.is_dark_theme = is_dark
+                    if self.backend:
+                        self.backend.set_dark_theme(is_dark)
+            except Exception:
+                pass
 
     def _update_subjects_map(self):
         entries = self.api.runtime.current_day_entries
