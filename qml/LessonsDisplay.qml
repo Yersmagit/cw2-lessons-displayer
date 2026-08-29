@@ -163,9 +163,13 @@ Item {
             // 布局尚未完成，delegate 可能未实例化（itemAtIndex 返回 null），立刻
             // 滚动会滚到错误位置。故清空锁定，并用 Qt.callLater 延迟到布局稳定后
             // 再权威定位，保证一次到位。
+            // 同时：UI 宽度更新（特殊模式切换 / 主程序宽度跟随，uiLoader 宽度有
+            // 400ms 平滑动画）期间视口宽度连续变化，滚动条会闪动；未悬停则直接
+            // 暂时隐藏滚动条，等宽度稳定后再由 hover/交互重新显示。
             onWidthChanged: {
                 lastScrollIndex = -1
                 lastTargetX = -1
+                if (!hovered) scrollBarVisible = false
                 Qt.callLater(function() { relayoutScroll() })
             }
             onContentWidthChanged: {
