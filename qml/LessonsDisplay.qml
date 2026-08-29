@@ -163,13 +163,29 @@ Item {
                 Qt.callLater(function() { relayoutScroll() })
             }
 
-            // 宽度/内容宽度变化后延迟重定位：放得下则 contentX 归零（居中），
-            // 放不下则重新滚动到当前高亮课程。
+            // 宽度/内容宽度变化后延迟重定位：放得下则 contentX 归零（居中）；
+            // 放不下则无动画直接对齐到当前高亮课程（宽度变化期间用动画重定位会反复
+            // stop+start 滚动动画，产生横向抖动/抽搐）。
             function relayoutScroll() {
                 if (contentWidth <= width) {
                     if (contentX !== 0) contentX = 0
-                } else if (autoScrollEnabled) {
-                    scrollToCurrentLesson()
+                    return
+                }
+                if (!autoScrollEnabled) return
+                // 停止可能正在运行的滚动动画，避免其继续把 contentX 拉回旧目标
+                if (scrollAnimation.running) scrollAnimation.stop()
+                var targetId = lessonsBackend.currentLessonId || lessonsBackend.nextLessonId
+                if (!targetId) return
+                var items = lessonsBackend.displayItems
+                for (var i = 0; i < items.length; i++) {
+                    if (items[i].type === "lesson" && items[i].id === targetId) {
+                        var targetX = computeTargetX(i)
+                        if (isNaN(targetX) || targetX < 0) return  // 布局未稳定，等下一次
+                        lastScrollIndex = i
+                        lastTargetX = targetX
+                        if (Math.abs(contentX - targetX) > 1) contentX = targetX
+                        break
+                    }
                 }
             }
 
