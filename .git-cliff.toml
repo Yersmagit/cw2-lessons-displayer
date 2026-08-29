@@ -1,7 +1,7 @@
 [changelog]
 body = """
 
-## 插件新版本 {% if version %}({{ version }}){%- endif -%}
+## Lessons Displayer 全量课程展示 {% if version %}({{ version }}){%- endif -%}
 
 {% for group, commits in commits | group_by(attribute="group") %}
 
