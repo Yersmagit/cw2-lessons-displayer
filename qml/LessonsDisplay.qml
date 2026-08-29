@@ -129,20 +129,13 @@ Item {
             clip: true
             height: (lessonsBackend.mode === "normal" ? 40 : 46) * lessonsBackend.scaleFactor
             anchors.verticalCenter: parent.verticalCenter
-            // 视口宽度 = 可用宽度 - 两侧 spacer：内容放得下时 ListView 与内容同宽并被
-            // 两侧 spacer 夹住居中（contentX 恒为 0）；放不下时 spacer=0，视口占满
-            // 剩余空间，自动滚动/滚动动画等逻辑正常执行。
-            // 注意：不覆盖 contentWidth，用 ListView 自动计算的真实内容宽度（固定宽 delegate，
-            // 与视口宽度无关，无循环绑定）。
+            // 视口宽度 = 可用宽度 - 两侧 spacer：放得下时居中（contentX=0），放不下时占满剩余空间自动滚动
             width: availableListViewWidth() - leftSpacer.width - rightSpacer.width
 
             // 模型改为 displayItems，包含课程和分隔符
             model: lessonsBackend.displayItems
 
-            // 预实例化视口外的 delegate，保证 itemAtIndex(index) 对任意 index 都能
-            // 返回真实几何（否则远处 delegate 未实例化：itemAtIndex 返回 null，
-            // positionViewAtIndex 用估算返回错误 contentX，滚到错误位置/滚过头回弹）。
-            // 课程列表项数有限（通常 < 30），全实例化开销可忽略。
+            // 预实例化全部 delegate（课程数有限，开销可忽略），保证 itemAtIndex 返回真实几何，避免滚动定位错误
             displayMarginBeginning: 10000
             displayMarginEnd: 10000
 
@@ -151,22 +144,13 @@ Item {
             property bool userInteracted: false
             property bool hovered: false
             property bool scrollBarVisible: false
-            // 自动滚动防抖：上次滚动目标索引/位置、是否动画进行中。
-            // 防止同一目标被每秒滚动请求反复打断/重启动画（动画永远无法完成，
-            // contentX 原地抖动=抽搐，高亮到不了左20%）。
+            // 自动滚动防抖：同一目标每秒请求不打断/重启动画（避免 contentX 原地抖动）
             property int lastScrollIndex: -1
             property real lastTargetX: -1
             property bool scrollAnimating: false
 
-            // 视图宽度 / 内容宽度变化 → 目标“左 20%”位置会变，重置锁定让下次
-            // 滚动重新权威定位（避免沿用旧位置导致高亮不在左 20% / 露出空白）。
-            // 宽度变化（尤其从“放得下”缩到“放不下”）的瞬态里，ListView 虚拟化
-            // 布局尚未完成，delegate 可能未实例化（itemAtIndex 返回 null），立刻
-            // 滚动会滚到错误位置。故清空锁定，并用 Qt.callLater 延迟到布局稳定后
-            // 再权威定位，保证一次到位。
-            // 同时：UI 宽度更新（特殊模式切换 / 主程序宽度跟随，uiLoader 宽度有
-            // 400ms 平滑动画）期间视口宽度连续变化，滚动条会闪动；未悬停则直接
-            // 暂时隐藏滚动条，等宽度稳定后再由 hover/交互重新显示。
+            // 宽度变化（尤其放得下→放不下）瞬态布局未稳，清空锁定并用 Qt.callLater 延迟权威定位；
+            // 期间视口宽度连续变化会闪动滚动条，未悬停则暂时隐藏
             onWidthChanged: {
                 lastScrollIndex = -1
                 lastTargetX = -1
@@ -210,9 +194,7 @@ Item {
             function pauseAutoScroll() {
                 autoScrollEnabled = false
                 userInteracted = true
-                // 用户操作列表滚动（拖拽/滚动条/滚轮）后，延迟 4 秒再恢复自动滚动。
-                // 统一重启恢复定时器，确保一定在 4 秒后恢复（避免某路径遗漏 restart
-                // 而永久卡死）。
+                // 用户操作滚动后延迟 4 秒恢复自动滚动（统一重启定时器，避免某路径遗漏而永久卡死）
                 userInteractionTimer.restart()
             }
 
@@ -231,8 +213,7 @@ Item {
             onMovementStarted: {
                 pauseAutoScroll()
                 updateScrollBarVisible(true)
-                // 用户拖拽开始：立即停止自动滚动动画，避免与用户操作抢 contentX
-                // （否则用户刚滚到的位置会被自动滚动动画拉走/打断）。
+                // 用户拖拽开始立即停止自动滚动动画，避免抢 contentX
                 if (scrollAnimation.running) scrollAnimation.stop()
             }
 
@@ -278,8 +259,7 @@ Item {
             // 委托：根据类型渲染课程或分隔符
             delegate: Loader {
                 id: delegateLoader
-                // 暴露自身在模型中的 index，便于 computeTargetX 通过 contentItem 子项
-                // 定位目标项的真实几何（也便于测试/调试）。
+                // 暴露 index，便于 computeTargetX 定位目标项真实几何（也便于测试）
                 property int itemIndex: index
                 sourceComponent: {
                     if (modelData.type === "separator") {
@@ -307,10 +287,7 @@ Item {
                         width: targetWidth
                         height: (lessonsBackend.mode === "normal" ? 40 : 46) * lessonsBackend.scaleFactor
 
-                        // 使用 Behavior 为宽度添加动画。
-                        // 特殊窗口引擎在创建时注入 suppressExpandAnim=true（仅新窗口可见），
-                        // 用于抑制首次加载的展开动画（新窗口直接以展开状态显示，避免与旧
-                        // 窗口正在播放的展开动画重复）；主引擎无此属性，动画正常播放。
+                        // 宽度动画；特殊窗口引擎注入 suppressExpandAnim=true 抑制首次加载展开动画（主引擎无此属性，正常播放）
                         Behavior on width {
                             enabled: typeof suppressExpandAnim === "undefined" ? true : !suppressExpandAnim
                             NumberAnimation {
@@ -507,10 +484,7 @@ Item {
                 Component {
                     id: placeholderComponent
                     Item {
-                        // 占位提示：用 RowLayout + AlignVCenter 可靠垂直居中。
-                        // 原实现把 Icon 高度绑到父行高（height: parent.height）且行内默认顶部
-                        // 对齐，缩放动画期间行高/文字高度更新节奏不一致，会导致文字提示位置
-                        // 偏移（偏上/偏下）。这里固定 Icon 尺寸并显式垂直居中，缩放时位置稳定。
+                        // 占位提示：固定 Icon 尺寸 + RowLayout AlignVCenter 显式垂直居中，缩放时位置稳定
                         width: contentRow.implicitWidth + 20 * lessonsBackend.scaleFactor
                         height: (lessonsBackend.mode === "normal" ? 40 : 46) * lessonsBackend.scaleFactor
 
@@ -577,12 +551,8 @@ Item {
                 }
             }
 
-            // 用 itemAtIndex(index).x 计算目标 contentX：displayMargin 保证 delegate
-            // 全实例化，x 为真实绝对位置。不依赖 positionViewAtIndex——它对 Loader+
-            // 内容自适应宽度的远处/末尾项会返回错误 contentX（超过 maxX 或负数），
-            // 导致滚过头回弹。返回目标项应位于的 contentX：左 20%；末尾项贴右缘
-            // （maxX）；开头项贴左缘（0）。目标项未实例化（布局未稳定）返回 NaN，
-            // 让调用方跳过本次滚动、延迟重试。
+            // 用 itemAtIndex(index).x（displayMargin 保证全实例化，真实绝对位置）算目标 contentX：
+            // 左 20%，末尾贴右缘 maxX，开头贴左缘 0；未实例化返回 NaN 让调用方跳过
             function computeTargetX(index) {
                 forceLayout()
                 var maxX = contentWidth - width
@@ -596,17 +566,12 @@ Item {
                 return target
             }
 
-            // 滚动到指定索引（左20%位置，平滑动画）。
-            // 新目标**一律**用 computeTargetX（itemAtIndex 真实几何，正确处理边界），
-            // 恢复原位后动画到目标位置；锁定目标位置，同索引每秒请求沿用锁定值
-            // （不重算、不跳变）；动画结束后由 finalizeScroll 精确对齐，修正滚过头/
-            // 没滚到头的偏差。
+            // 滚动到指定索引（左20%，平滑动画）：新目标用 computeTargetX，锁定目标位置防抖，动画结束后 finalizeScroll 精确对齐
             function scrollToIndex(index) {
                 forceLayout()
                 if (!autoScrollEnabled) return
                 if (contentWidth <= width) {
-                    // 内容放得下：居中显示，contentX 恒为 0（清除宽度变化瞬态
-                    // 可能残留的滚动偏移，避免课程整体偏左、右侧露空白）。
+                    // 内容放得下：contentX 归零居中（清除宽度变化瞬态残留偏移）
                     if (contentX !== 0) contentX = 0
                     return
                 }
@@ -622,8 +587,7 @@ Item {
                 // 新目标：用真实几何计算目标位置，交给动画平滑滚动
                 var targetX = computeTargetX(index)
                 if (isNaN(targetX)) {
-                    // 布局未稳定：清空锁定并跳过本次，绝不滚到错误位置；
-                    // 等 Qt.callLater / 下一次每秒请求重试。
+                    // 布局未稳定：清空锁定跳过本次，等下一次请求重试
                     lastScrollIndex = -1
                     lastTargetX = -1
                     return
@@ -641,8 +605,7 @@ Item {
                 scrollAnimation.start()
             }
 
-            // 动画结束后精确对齐：重新用 itemAtIndex 真实几何计算目标位置，
-            // 修正动画过程中视图宽度/内容宽度变化导致的滚过头/没滚到头的偏差。
+            // 动画结束后精确对齐：重算真实目标位置，修正动画中宽度变化导致的偏差
             function finalizeScroll() {
                 if (lastScrollIndex < 0) return
                 var targetX = computeTargetX(lastScrollIndex)
@@ -693,8 +656,7 @@ Item {
                     if (lessonsListView.autoScrollEnabled) lessonsListView.scrollToCurrentLesson()
                 }
                 function onLessonsUpdated() {
-                    // 不重置锁定：高亮课程变化会自然以新索引触发重新定位；
-                    // 若每次课程数据更新都重置，会频繁重新定位导致闪现。
+                    // 不重置锁定：高亮变化自然以新索引重新定位，避免频繁重置闪现
                     if (lessonsListView.autoScrollEnabled) lessonsListView.scrollToCurrentLesson()
                 }
             }
@@ -765,10 +727,8 @@ Item {
     }
 
     // ===== 按钮文本提示（tooltip）=====
-    // 悬停按钮时（无延迟）显示；圆角 6px、高度 30、左右边距 9；x 居中于对应按钮，
-    // y 顶部距胶囊下边框 5px。显示/隐藏均有 150ms 透明度渐变动画。
-    // 一般模式下窗口带 mask：显示时立即通知后端移除（不遮挡），隐藏时等淡出动画
-    // 结束后再恢复 mask（引用计数避免与右键菜单冲突）。
+    // 悬停按钮显示，x 居中于按钮、y 在胶囊下边框 5px；显示/隐藏 150ms 渐变。
+    // 一般模式带 mask：显示时移除、隐藏淡出后恢复（引用计数避免与右键菜单冲突）。
     Rectangle {
         id: tooltip1
         width: tip1Text.implicitWidth + 18
@@ -865,10 +825,7 @@ Item {
         return root.width - fixedWidth
     }
 
-    // 居中 spacer 宽度：内容比可用宽度窄时，左右各占剩余一半
-    // （spacer + 列表内容 + spacer = 可用宽度，列表内容真正居中）；
-    // 内容超出可用宽度时返回 0，让 ListView 占满剩余空间并正常滚动/自动滚动。
-    // 声明式绑定使左右 spacer 与 ListView 宽度在 contentWidth / 窗口宽度变化时自动更新。
+    // 居中 spacer 宽度：内容较窄时左右各占剩余一半使列表居中；超出时返回 0 让列表占满并可滚动
     function centerSpacerWidth() {
         var aw = availableListViewWidth()
         var cw = lessonsListView.contentWidth

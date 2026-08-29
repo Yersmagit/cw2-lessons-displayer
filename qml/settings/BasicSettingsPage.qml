@@ -3,11 +3,8 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import RinUI
 
-// "基本"设置页：小组件图层设置项（自动保存）。
-// 根为 ColumnLayout（与主程序 SettingsLayout 一致），设置项从上到下依次排开，
-// 由 SettingsDialog 的 Flickable 承载滚动。
-// ComboBox 写法与主程序（Class-Widgets-2 General/Index.qml "Window Layer"）完全一致：
-// 静态 ListModel + textRole + onCurrentIndexChanged(if focus) + Component.onCompleted 初始化。
+// "基本"设置页：小组件图层设置项（自动保存）。根为 ColumnLayout，由 SettingsDialog 的 Flickable 承载滚动。
+// ComboBox 写法与主程序一致（静态 ListModel + textRole + onCurrentIndexChanged(if focus)）。
 // ⚠️ 不要改成动态 append model（RinUI ComboBox 弹出菜单首次打开会有大片空白）。
 ColumnLayout {
     id: root
@@ -25,9 +22,7 @@ ColumnLayout {
         description: "控制本插件小组件的窗口层级"
 
         ComboBox {
-            // 用 syncing 标记区分"程序化同步"与"用户变更"，不依赖 focus。
-            // ⚠️ syncing 必须初始为 true：模型填充时 currentIndex 会从 -1 自动变 0，
-            // 若 syncing 为 false 会在此刻把 index 0 的值误写回（覆盖已保存的设置）。
+            // syncing 区分"程序化同步"与"用户变更"；⚠️ 必须初始为 true，否则模型填充时会把 index 0 误写回（覆盖已保存设置）
             property bool syncing: true
             model: ListModel {
                 ListElement { text: "跟随软件设置"; value: "follow" }

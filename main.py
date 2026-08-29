@@ -15,9 +15,7 @@ from PySide6.QtQml import QQmlApplicationEngine
 from ClassWidgets.SDK import CW2Plugin
 from PySide6.QtCore import Qt
 
-# 跟随主程序配置的深浅色主题：RinUI ThemeManager 是进程级单例（新版主程序捆绑）。
-# 一般模式深浅色优先用主程序设置（Light/Dark/Auto），Auto 时由 RinUI 跟随系统；
-# 旧版主程序无 RinUI 时回退 darkdetect 轮询系统主题。
+# 深浅色主题跟随主程序 RinUI ThemeManager（Light/Dark/Auto），无 RinUI 时回退 darkdetect。
 try:
     from RinUI.core.theme import ThemeManager as RinThemeManager
     _HAS_RIN_THEME = True
@@ -27,13 +25,10 @@ except Exception:
 
 plugin_logger = logger.bind(plugin="lessons-displayer")
 
-# 默认宽度常量
 DEFAULT_UI_WIDTH = 100
 UI_HEIGHT = 54
 
-# 插件设置默认值（写死在源码里）。
-# 处理规则：配置文件里有相应配置项 → 加载配置值；没有 → 加载默认值。
-# "恢复默认设置"= 清空/删除配置文件，全部回落到本默认值。
+# 插件设置默认值：配置文件有对应项则用之，否则回落默认；"恢复默认设置"= 删除配置文件。
 DEFAULT_SETTINGS = {
     "animation_performance": True, # 动画性能优化（高级设置，默认启用）
     "widgets_layer": "follow",   # 小组件图层：跟随软件设置(follow)/始终置顶(top)/始终置底(bottom)
@@ -116,18 +111,15 @@ class LessonsBackend(QObject):
         self._anim_optimize_timer.setSingleShot(True)
         self._anim_optimize_timer.timeout.connect(self._on_anim_optimize_timeout)
 
-        # 初始化字体
         self._update_font()
 
-        # 初始化背景不透明度
         self._bg_opacity = 1.0
         self._update_bg_opacity
         
-        # 初始化缩放因子
         self._scale_factor = 1.0
         self._update_scale_factor()
 
-        # 初始化外围圆角半径（跟随主程序 widget_corner_radius 配置换算）
+        # 外围圆角半径（跟随主程序 widget_corner_radius 配置换算）
         self._widget_radius = 27.0
         self._update_widget_radius()
 
@@ -160,12 +152,7 @@ class LessonsBackend(QObject):
         self.scaleFactorChanged.emit()
 
     def _update_widget_radius(self):
-        """跟随主程序"小组件圆角半径"配置（preferences.widget_corner_radius）换算本 UI 外围圆角。
-
-        算法：主程序半径 >16 → 本 UI 固定 27；0~16 → 按 0~16 等比缩放到 0~27
-        （即 min(27, r*27/16)，恰好 16 时两分支结果一致均为 27）。
-        旧版主程序无该配置（读不到）时固定使用 27。
-        """
+        """跟随主程序 widget_corner_radius 换算外围圆角：min(27, r*27/16)（>16→27，0~16 等比缩放；读不到→27）。"""
         try:
             configs = self.plugin._configs
             if configs:
@@ -529,9 +516,7 @@ class LessonsBackend(QObject):
             self._ui_x = int(x)
             self._ui_y = int(y)
 
-            # 动画性能优化：纯平移（位置变化、宽度不变）开始时临时禁用 mask。
-            # 必须在 positionChanged.emit() 之前禁用：动画开始瞬间 emit 触发的
-            # _update_mask 也会因 _mask_enabled=False 被跳过，不做 mask 计算。
+            # 动画性能优化：纯平移开始时临时禁用 mask（须在 positionChanged.emit() 前，否则其触发的 _update_mask 会做 mask 计算）
             if trigger_anim_optimize and (self._ui_x != old_x or self._ui_y != old_y):
                 self._maybe_begin_translate_anim()
 
@@ -717,12 +702,10 @@ class LessonsBackend(QObject):
             return "top"
 
     def _update_layer_state(self):
-        """根据插件"小组件图层"设置 + 主程序 widgets_layer 配置计算置顶/置底状态。
+        """根据插件 widgets_layer 设置 + 主程序 widgets_layer 配置计算置顶/置底状态。
 
-        - 插件设置 widgets_layer：follow(跟随软件设置)/top(始终置顶)/bottom(始终置底)
-        - follow 时跟随主程序配置：top→置顶、bottom→置底、normal→普通
-        结果通过 layerTopmost/layerBottommost 暴露给 QML flags 绑定（纯 QML flags 方案，
-        模仿主程序：WindowStaysOnTopHint / WindowStaysOnBottomHint 互斥切换）。
+        follow 时跟随主程序（top→置顶、bottom→置底、normal→普通），结果经
+        layerTopmost/layerBottommost 暴露给 QML flags 绑定。
         """
         try:
             strategy = self.plugin.settings_backend.getString("widgets_layer")
@@ -1015,8 +998,7 @@ class Plugin(CW2Plugin):
         self._configs = None
         self._mask_enabled = True
         self.settings_backend = None
-        # 日志文件 handler id（on_unload 时移除以释放 log/ 目录文件句柄，否则 Windows
-        # 下主程序卸载/删除插件目录会因文件被占用失败）
+        # 日志文件 handler id（on_unload 时移除，否则 Windows 下删除插件目录会因文件占用失败）
         self._log_handler_id = None
         # 弹出浮层（右键菜单/设置页）置顶引用计数：>0 时所有插件窗口持续置顶
         self._topmost_refs = 0
@@ -1049,7 +1031,7 @@ class Plugin(CW2Plugin):
             log_dir = os.path.join(self.PATH, "log")
             os.makedirs(log_dir, exist_ok=True)
             log_file = os.path.join(log_dir, "lessons-displayer.log")
-            # 保存 handler id，供 on_unload 时 logger.remove(id) 释放日志文件句柄
+            # 保存 handler id，供 on_unload 时释放日志文件句柄
             self._log_handler_id = logger.add(
                 log_file,
                 rotation="1 MB",
@@ -1065,11 +1047,7 @@ class Plugin(CW2Plugin):
             plugin_logger.error(f"设置插件日志失败: {e}")
 
     def _remove_logging(self):
-        """移除插件日志处理器，释放 log/ 目录文件句柄。
-
-        不释放的话，Windows 上主程序卸载/删除插件目录时会因日志文件被占用
-        （PermissionError: 另一个程序正在使用此文件）而失败。
-        """
+        """移除插件日志处理器，释放 log/ 句柄（否则 Windows 上删除插件目录会因文件占用失败）。"""
         try:
             if getattr(self, "_log_handler_id", None) is not None:
                 logger.remove(self._log_handler_id)
@@ -1079,14 +1057,9 @@ class Plugin(CW2Plugin):
             plugin_logger.debug(f"移除插件日志处理器失败: {e}")
 
     def _ensure_engine_import_paths(self, engine):
-        """确保 QML 引擎能解析 `import RinUI`（兼容新版主程序）。
+        """确保 QML 引擎能解析 `import RinUI`（新版主程序不再为插件引擎注入该路径，否则根对象为空）。
 
-        插件为主窗口自建独立的 QQmlApplicationEngine，
-        新版主程序不再为插件引擎注入 RinUI 的 QML 导入路径，导致
-        `import RinUI` 解析失败、engine.rootObjects() 为空（"无法创建全屏窗口"）。
-        这里参考主程序 RinUIWindow.load() 的做法，把 RinUI 包所在目录
-        （site-packages，内含 RinUI/qmldir）加入引擎导入路径；
-        旧版主程序若已注入该路径，重复添加也无副作用（Qt 自带去重）。
+        把 RinUI 包所在目录（site-packages，含 qmldir）加入引擎导入路径；重复添加无副作用。
         """
         candidates = []
         try:
@@ -1114,8 +1087,7 @@ class Plugin(CW2Plugin):
             return False
 
     def on_load(self):
-        # 兼容新版主程序：调用基类 on_load 以设置 self.pid、注册 PluginBackendBridge、
-        # 设当前插件并发出 initialized 信号（旧版基类为空实现，调用无副作用）。
+        # 兼容新版主程序：调用基类 on_load（设 pid、注册后端桥、发 initialized；旧版空实现无副作用）
         super().on_load()
         self._setup_logging()
         plugin_logger.info("今日课程插件加载成功")
@@ -1144,8 +1116,7 @@ class Plugin(CW2Plugin):
         self.backend.update_lessons()
         self.backend.set_dark_theme(self.is_dark_theme)
         self.backend.update_position()
-        # 首次显示前确保初始 opacity 为 0：update_position() 会把 opacity 置 1，
-        # 若不重置，uiLoader 加载后内容直接可见（出现"先显示→隐藏→再淡入"）。
+        # 首次显示前重置 opacity 为 0，避免 uiLoader 加载后内容直接可见
         self.backend.set_ui_opacity(0)
         self.backend.modeChanged.connect(self._on_mode_changed)
         plugin_logger.debug("已连接 modeChanged 信号")
@@ -1163,8 +1134,7 @@ class Plugin(CW2Plugin):
         self.settings_backend.settingsChanged.connect(self._on_plugin_settings_changed)
         if self.backend:
             self.backend._update_layer_state()
-            # 倒计时样式需在 settings_backend 就绪后重新加载（LessonsBackend.__init__
-            # 里调用时 settings_backend 尚为 None，会回落到 default，导致重启后配置失效）
+            # settings_backend 就绪后重新加载倒计时样式（__init__ 时其为 None，会回落默认）
             self.backend._update_countdown_style()
         plugin_logger.debug("已连接 settingsChanged 信号")
 
@@ -1213,10 +1183,7 @@ class Plugin(CW2Plugin):
 
     def _on_config_changed(self):
         plugin_logger.debug("配置变化，更新位置、背景不透明度和字体")
-        # 先同步贴边隐藏的窗口显隐，再更新位置：
-        # 恢复显示时须先 show 窗口（此时 loader 仍在隐藏位置 -30/顶部），
-        # 再 update_position 改 uiY 触发平移动画——否则位置动画在窗口隐藏期间
-        # 被压缩/浪费，show 时已近目标，出现"先闪现目标位置、再从顶部滑下"。
+        # 先同步贴边隐藏的窗口显隐再更新位置（否则位置动画在隐藏期间被浪费，恢复时闪现目标位置）
         self._sync_hide_visibility()
         if self.backend:
             # 纯平移（位置/隐藏变化，宽度不变）：动画性能优化启用时动画期间临时禁用 mask
@@ -1230,14 +1197,9 @@ class Plugin(CW2Plugin):
             self.backend._update_layer_state()
 
     def _sync_hide_visibility(self):
-        """贴边隐藏主程序小组件时，真正隐藏插件主窗口，解除时恢复显示。
+        """贴边隐藏时真正隐藏插件主窗口，解除时恢复显示（新版主程序仅 opacity=0 仍驻留屏幕）。
 
-        兼容新版主程序：仅靠 opacity=0 + mask 移到屏幕外时，插件窗口仍以
-        透明形态驻留在屏幕上（isVisible 恒为 True），用户感知为"UI 仍显示"。
-        这里在 hide.state=True 时隐藏主窗口、恢复时重新显示，实现"直接不显示"。
-
-        仅在正常模式处理（特殊模式窗口显隐由模式切换单独管理）；用 _edge_hidden
-        标记区分"因贴边隐藏而隐藏"与"尚未显示/特殊模式隐藏"，避免误显示。
+        仅在正常模式处理，用 _edge_hidden 区分"因贴边隐藏"与"尚未显示/特殊模式隐藏"。
         """
         if not self.window or not self.backend or not self._configs:
             return
@@ -1252,10 +1214,7 @@ class Plugin(CW2Plugin):
             if hide:
                 if self.window.isVisible() and not self._edge_hidden:
                     self._edge_hidden = True
-                    # 延迟隐藏：等胶囊滑出屏幕（与主程序小组件隐藏动画同步，
-                    # update_position 随后会移动胶囊到屏幕外）后再隐藏窗口——
-                    # 保证隐藏前最后一帧为"胶囊在屏幕外"（不可见），
-                    # 恢复显示时不闪现"隐藏前胶囊在目标位置"的陈旧帧。
+                    # 延迟隐藏：等胶囊滑出屏幕后再隐藏，避免恢复时闪现陈旧帧
                     try:
                         if self._hide_window_timer:
                             self._hide_window_timer.stop()
@@ -1291,12 +1250,7 @@ class Plugin(CW2Plugin):
             plugin_logger.debug(f"延迟隐藏窗口失败: {e}")
 
     def _check_mask_health(self):
-        """mask 自愈：正常情况下（正常模式、无 mask 占用、无动画优化、窗口可见），
-        若 mask 被意外禁用或与实际 UI 区域不符，重新启用并应用，防止偶发 mask 失效。
-
-        仅在引用计数归零且非动画优化占用时才修复，不会误恢复正在使用的 mask
-        （右键菜单/文本提示/平移动画期间 mask 应保持禁用）。
-        """
+        """mask 自愈：正常模式、无占用、可见时若 mask 被意外禁用/清空则重新应用。"""
         try:
             if not self.window or not self.backend:
                 return
@@ -1314,8 +1268,7 @@ class Plugin(CW2Plugin):
                 self._update_mask()
                 plugin_logger.debug("mask 自愈：恢复被意外禁用的 mask")
             else:
-                # _mask_enabled=True 但实际 mask 为空（可能被 setFlags/系统重置）
-                # → 重新应用，防止窗口失去裁剪、出现全屏透明形态
+                # 实际 mask 为空（可能被重置）→ 重新应用，防止窗口失去裁剪
                 cur = self.window.mask()
                 if cur is not None and cur.isEmpty():
                     self._update_mask()
@@ -1350,11 +1303,8 @@ class Plugin(CW2Plugin):
             self._force_topmost()
             return
         try:
-            # 每次同步重新计算图层状态（follow 时跟随主程序 widgets_layer 配置）；
-            # 状态变化会 emit layerChanged → _on_layer_changed 触发 _apply_layer_flags。
+            # 每次同步重算图层状态（layerChanged 驱动置顶应用）；置顶稳定后无需每秒刷新，非置顶仍每秒应用作兜底
             self.backend._update_layer_state()
-            # 置顶状态稳定后无需每秒刷新（始终置顶/跟随主程序置顶由 layerChanged
-            # 在状态变化时应用）；非置顶（普通/置底）仍每秒应用作兜底。
             if not self.backend.layerTopmost:
                 self._apply_layer_flags()
         except Exception as e:
@@ -1363,14 +1313,10 @@ class Plugin(CW2Plugin):
         self._check_mask_health()
 
     def _apply_layer_flags(self):
-        """按图层策略设置主窗口 Qt flags + Win32 层级（置顶/置底/普通互斥，可靠）。
+        """按图层策略设置 Qt flags + Win32 层级（置顶/置底/普通互斥）。
 
-        - layerTopmost：WindowStaysOnTopHint + SetWindowPos(HWND_TOPMOST) + raise_
-        - layerBottommost：WindowStaysOnBottomHint + SetWindowPos(HWND_NOTOPMOST) + lower
-        - 普通：清除 top/bottom hint + SetWindowPos(HWND_NOTOPMOST)
-        与右键菜单/设置弹出（_apply_topmost_all）同一套 Win32 置顶方式（仅默认置顶
-        用 SWP_NOACTIVATE 不抢焦点）。Python 统一互斥控制，避免 QML flags 绑定
-        与 setFlag 冲突导致置顶/置底切换状态残留。
+        与 _apply_topmost_all 同一套置顶方式（默认置顶用 SWP_NOACTIVATE 不抢焦点），
+        Python 统一互斥控制，避免 QML flags 与 setFlag 冲突残留。
         """
         if not self.window or not self.backend:
             return
@@ -1407,13 +1353,7 @@ class Plugin(CW2Plugin):
             plugin_logger.debug(f"应用图层失败: {e}")
 
     def _on_layer_changed(self):
-        """图层状态变化（layerTopmost/layerBottommost）时应用图层（置顶/置底/普通互斥）。
-
-        由 backend.layerChanged 触发（_update_layer_state 状态变化时 emit），
-        保证"始终置顶/跟随主程序置顶"等图层切换立即生效；置顶状态稳定后
-        无需每秒刷新（_sync_window_layer 不再对置顶做无谓的 setFlags/SetWindowPos）。
-        仅在正常模式且无弹出浮层占用时应用，避免破坏浮层置顶。
-        """
+        """图层状态变化时立即应用图层；置顶稳定后无需每秒刷新。仅正常模式且无浮层占用时应用。"""
         if not self.window or not self.backend:
             return
         if self.backend.mode != "normal":
@@ -1457,8 +1397,7 @@ class Plugin(CW2Plugin):
 
     def _check_system_theme(self):
         if _HAS_RIN_THEME:
-            # 已跟随主程序主题（RinUI 在 Auto 模式下自行监听系统主题并 emit 信号），
-            # 无需再每秒轮询系统主题，避免覆盖主程序设置的 Light/Dark。
+            # 已跟随主程序主题（RinUI Auto 模式自行监听系统主题），无需再轮询
             return
         try:
             sys_theme = darkdetect.theme()
@@ -1573,9 +1512,7 @@ class Plugin(CW2Plugin):
             hide = self._configs.interactions.hide.state
             self.backend.set_ui_opacity(0)
 
-            # 启动逻辑：先等胶囊形 UI 从初始宽度变为实际宽度；
-            # 一旦宽度发生变化，或 2 秒内无任何变化，都立即启动淡入
-            # （淡入与宽度过渡动画同时发生）。
+            # 启动淡入：宽度一旦变化或 2 秒内无变化即启动（与宽度过渡动画同步）
             self._ui_fade_in_started = False
             self._initial_ui_width = int(self.backend.uiWidth)
             plugin_logger.debug(f"初始 UI 宽度: {self._initial_ui_width}")
@@ -1667,17 +1604,12 @@ class Plugin(CW2Plugin):
             self._last_mouse_pos = pos
             self._idle_seconds = 0
             if self._cursor_hidden:
-                # 恢复光标同样作用于当前实际显示的窗口（隐藏时设在专用窗口，
-                # 若恢复作用在主窗口，专用窗口仍保持 BlankCursor → 移动鼠标无光标）
+                # 恢复光标同样作用于当前实际显示的窗口（否则专用窗口仍保持 BlankCursor）
                 self._active_window().setCursor(Qt.ArrowCursor)
                 self._cursor_hidden = False
 
     def eventFilter(self, obj, event):
-        """特殊模式下鼠标按下/移动时恢复隐藏的光标。
-
-        移动恢复主要由 _check_mouse_idle 的位置检测完成，这里兜底处理
-        "点击不改变位置"的情况（鼠标按下立即恢复，无需等到下一次移动检测）。
-        """
+        """特殊模式下鼠标按下/移动时恢复隐藏的光标（兜底"点击不改变位置"不触发移动检测的情况）。"""
         if self._cursor_hidden:
             try:
                 etype = event.type()
@@ -1694,11 +1626,7 @@ class Plugin(CW2Plugin):
         return False
 
     def _enable_mask_and_update(self):
-        """延迟后恢复 mask 更新。
-
-        仅在 mask 引用计数归零（无 tooltip/菜单占用）且处于正常模式时恢复，
-        避免恢复 mask 时把仍打开的浮层裁掉，或与泄漏的引用计数冲突。
-        """
+        """延迟后恢复 mask 更新（仅在引用计数归零且正常模式时，避免裁掉仍打开的浮层）。"""
         if not self.backend:
             return
         if self.backend.mode != "normal":
@@ -1795,11 +1723,7 @@ class Plugin(CW2Plugin):
             return True
 
     def _force_topmost(self):
-        """重新强制窗口置顶并置为前台（Windows），确保全屏模式下覆盖任务栏
-
-        在 QML 全屏过渡/窗口状态切换完成后再调用一次，避免过渡期间
-        窗口层级被重置到任务栏之下导致任务栏露出。
-        """
+        """重新强制窗口置顶并置为前台（Windows），确保全屏时覆盖任务栏。"""
         if not self.window or not self.backend:
             return
         if self.backend.mode == "normal":
@@ -1827,13 +1751,9 @@ class Plugin(CW2Plugin):
             plugin_logger.debug(f"强制置顶失败: {e}")
 
     def _apply_topmost_all(self, topmost):
-        """对插件所有 UI 窗口（主窗口 + 特殊模式专用窗口）应用/移除置顶。
+        """对主窗口与专用窗口应用/移除置顶（Windows API 直接改标志，不重建窗口）。
 
-        模仿特殊模式 _force_topmost：置顶时除了 SetWindowPos(HWND_TOPMOST) 外，
-        还必须 _make_foreground_window 设为系统前台窗口（否则其它前台窗口仍可压住它）。
-        直接用 Windows API 改窗口标志，不重建窗口/不重绘 UI。
-        topmost=True：HWND_TOPMOST + WindowStaysOnTopHint + raise + 设系统前台。
-        topmost=False：仅正常模式移除置顶（特殊模式窗口本就需保持置顶）。
+        置顶需同时设为系统前台（否则其它前台窗口可压住）；移除仅限正常模式。
         """
         if sys.platform != 'win32':
             return
@@ -1895,9 +1815,7 @@ class Plugin(CW2Plugin):
             self.backend.set_switching(True)
             engine = QQmlApplicationEngine()
             engine.rootContext().setContextProperty("lessonsBackend", self.backend)
-            # 新窗口首次加载时抑制高亮课程展开动画（Behavior on width 禁用），
-            # 让新窗口直接以展开状态显示，避免与主窗口正在播放的展开动画重复
-            # （只对特殊窗口引擎生效，主引擎无此 context property，动画正常）。
+            # 抑制新窗口首次加载的展开动画（只对特殊窗口引擎生效），避免与主窗口动画重复
             engine.rootContext().setContextProperty("suppressExpandAnim", True)
             if self.settings_backend:
                 engine.rootContext().setContextProperty("settingsBackend", self.settings_backend)
@@ -1932,11 +1850,7 @@ class Plugin(CW2Plugin):
             self.backend.set_switching(False)
 
     def _on_special_animation_finished(self):
-        """主窗口启动动画播放完成：直接显示专用窗口（无渐变动画）。
-
-        主窗口保留在其下方可见（已按 mode 绑定渲染为全屏状态），因此无需隐藏
-        主窗口——退出特殊模式时销毁专用窗口即可即时显露胶囊，无延迟、无闪烁。
-        """
+        """主窗口动画完成：直接显示专用窗口（主窗口保留在其下方可见，退出时即时显露胶囊）。"""
         if not self.backend:
             return
         if self.backend.mode == "normal":
@@ -1946,9 +1860,7 @@ class Plugin(CW2Plugin):
             self.backend.set_switching(False)
             return
         try:
-            # 直接显示（无透明度渐变动画），并设为全屏 + 强制置顶 + 设为前台。
-            # 注意：QML 中不能写常量 visibility:FullScreen（会导致创建即显示），
-            # 因此在此处由 Python 显式设置全屏状态。
+            # 直接显示并设为全屏+置顶+前台（QML 不能写 visibility:FullScreen，会创建即显示，故在此由 Python 设置）
             self.special_window.show()
             self.special_window.setWindowState(Qt.WindowFullScreen)
             self._force_topmost()
@@ -1978,30 +1890,18 @@ class Plugin(CW2Plugin):
             self.backend.set_switching(False)
 
     def _on_mode_changed(self):
-        """特殊模式切换（混合方案：进入绘制专用窗口、退出只调整标志）。
-
-        进入特殊模式：主窗口按 mode 绑定全屏过渡显示，同时创建专用全屏窗口
-        （全新状态全屏置顶）保证完全置顶；专用窗口显示后覆盖在主窗口上方。
-        退出特殊模式：主窗口在特殊模式期间始终可见（已渲染），销毁专用窗口后
-        主窗口即时显露胶囊，仅调整窗口标志/恢复 mask，无延迟、无新窗口。
-        """
+        """特殊模式切换（混合方案）：进入创建专用全屏窗口保证完全置顶；退出仅销毁专用窗口即时显露胶囊。"""
         mode = self.backend.mode
         if mode == "normal":
-            # 退出特殊模式：主窗口在专用窗口下方已就绪，立即销毁专用窗口并恢复。
-            # 关键：专用窗口销毁时，其内 tooltip/菜单可能未配对释放 mask 引用
-            # 计数（如鼠标悬停按钮时 tooltip 正显示、窗口被销毁导致 showWidgetMask
-            # 永不调用），会污染 _mask_hide_refs 导致退出后 mask 永不恢复。切换回
-            # 正常模式时清零引用计数，重建干净的 mask 状态。
+            # 退出特殊模式：清零 mask 引用计数（专用窗口销毁时 tooltip/菜单可能未配对释放，会污染 _mask_hide_refs），立即销毁专用窗口并恢复
             if self.backend:
                 self.backend._mask_hide_refs = 0
                 self.backend._anim_optimize_active = False
                 self.backend._anim_optimize_timer.stop()
-            # 立即销毁专用窗口（主窗口已就绪，无需延迟，无闪烁）
             self._destroy_special_window()
             self.window.setMask(QRegion())
             self._mask_enabled = False
-            # 统一应用图层策略（置顶/置底/普通互斥），由 _apply_layer_flags 设置
-            # flags + SetWindowPos，避免手动 setFlag 残留。
+            # 统一应用图层策略（flags + SetWindowPos），避免手动 setFlag 残留
             if self.backend:
                 self.backend._update_layer_state()
             self._apply_layer_flags()
@@ -2009,16 +1909,13 @@ class Plugin(CW2Plugin):
                 self._active_window().setCursor(Qt.ArrowCursor)
                 self._cursor_hidden = False
             self._cursor_timer.stop()
-            # 恢复胶囊 mask：uiLoader 有 400ms 平移动画从全屏滑回停靠位，动画期间
-            # 保持 mask 禁用（避免读到动画中间帧/全屏旧值产生错误裁切或大片可点击
-            # 透明区），动画结束后（450ms）再恢复胶囊 mask。
+            # 恢复胶囊 mask：等 400ms 平移动画结束后（450ms）再恢复，避免动画中间帧错误裁切
             QTimer.singleShot(450, self._enable_mask_and_update)
             # 退出特殊模式后若主程序仍处于贴边隐藏，则保持插件主窗口隐藏
             self._edge_hidden = False
             self._sync_hide_visibility()
         else:
-            # 进入特殊模式：主窗口 QML 按 mode 绑定切换为全屏+纯色背景+胶囊置顶
-            # （过渡显示），同时准备专用全屏窗口保证完全置顶。
+            # 进入特殊模式：主窗口 QML 全屏过渡显示，同时准备专用全屏窗口保证完全置顶
             if self.backend:
                 self.backend._mask_hide_refs = 0
                 self.backend._anim_optimize_active = False
@@ -2045,26 +1942,22 @@ class Plugin(CW2Plugin):
                 except Exception as e:
                     plugin_logger.debug(f"强制置顶失败: {e}")
             self.window.raise_()
-            # QQuickWindow 没有 activateWindow()，须使用 QWindow 的 requestActivate()，
-            # 否则每次进入特殊模式都会抛 AttributeError，导致后续延迟置顶不执行
+            # QQuickWindow 无 activateWindow()，须用 QWindow 的 requestActivate()，否则抛 AttributeError
             self.window.requestActivate()
-            # 关键：立即把窗口设为系统前台窗口。否则若其它窗口（如资源管理器）
-            # 是前台，系统会让任务栏浮在置顶窗口之上（100%复现的露出任务栏问题）。
+            # 关键：设为系统前台窗口，否则其它前台窗口会让任务栏浮在置顶窗口之上
             self._make_foreground_window(int(self.window.winId()))
 
-            # 延迟再次强制置顶：等待 QML 全屏过渡/窗口状态切换完成后再重新置顶，
-            # 确保窗口完全覆盖任务栏（修复偶发露出任务栏问题）。
+            # 延迟再次强制置顶：等 QML 全屏过渡完成后重新置顶，确保覆盖任务栏
             QTimer.singleShot(400, self._force_topmost)
             QTimer.singleShot(1200, self._force_topmost)
 
-            # 按钮按下即开始创建隐藏的专用全屏窗口（利用主窗口启动动画时间
-            # 作为加载时间），动画完成后由信号驱动其显示，保证完全置顶。
+            # 按钮按下即创建隐藏的专用全屏窗口（利用主窗口动画时间加载），动画完成后由信号驱动显示
             self._prepare_special_window()
 
     def on_unload(self):
-        # 卸载消息需在移除日志处理器前打印（否则写不进文件）
+        # 先打印卸载消息再释放日志句柄（否则写不进文件）
         plugin_logger.info("今日课程插件卸载")
-        # 释放日志文件句柄（关键：否则 Windows 下主程序删除插件目录会失败）
+        # 释放日志文件句柄（否则 Windows 下删除插件目录会失败）
         self._remove_logging()
 
         self._destroy_special_window()
@@ -2127,8 +2020,7 @@ class Plugin(CW2Plugin):
                 self.ui_loader.heightChanged.disconnect(self._update_mask)
             except:
                 pass
-        # 断开 on_load 里连接、但此前未断开的主程序/后端信号，避免卸载后仍收到回调，
-        # 且信号持有对插件对象/后端的强引用导致插件无法被释放
+        # 断开主程序/后端信号，避免卸载后仍收到回调且信号强引用导致插件无法释放
         try:
             self.api.runtime.updated.disconnect(self.on_runtime_updated)
         except Exception:
@@ -2176,8 +2068,7 @@ class Plugin(CW2Plugin):
             except Exception:
                 pass
             self.backend = None
-        # super().on_load() 会把本插件注册进 PluginBackendBridge（并设为 CppOwnership），
-        # 主程序没有提供注销接口，这里直接从注册表移除，避免主程序长期强引用本插件对象
+        # 从 PluginBackendBridge 注册表移除本插件（主程序无注销接口，避免长期强引用）
         try:
             from src.core.plugin.bridge import PluginBackendBridge
             PluginBackendBridge._registry.pop(self.meta.get("id"), None)

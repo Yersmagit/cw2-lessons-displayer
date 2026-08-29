@@ -3,8 +3,7 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import RinUI
 
-// "关于"设置页：展示插件信息（名称/版本/作者/描述/仓库/许可证）。
-// 根为 ColumnLayout（与主程序 SettingsLayout 一致），由 SettingsDialog 的 Flickable 承载滚动。
+// "关于"设置页：展示插件信息（名称/版本/作者/描述/仓库/许可证）。根为 ColumnLayout，由 SettingsDialog 的 Flickable 承载滚动。
 // 数据由 SettingsBackend 从 cwplugin.json 读取（与发版流程同步，不硬编码）。
 ColumnLayout {
     id: root

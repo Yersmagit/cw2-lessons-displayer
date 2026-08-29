@@ -3,9 +3,7 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import RinUI
 
-// "高级"设置页：两个设置分组（动画性能优化 / 恢复默认设置），各带标题。
-// 根为 ColumnLayout（与主程序 SettingsLayout 一致），设置项从上到下依次排开，
-// 由 SettingsDialog 的 Flickable 承载滚动。
+// "高级"设置页：动画性能优化 / 恢复默认设置两个分组。根为 ColumnLayout，由 SettingsDialog 的 Flickable 承载滚动。
 ColumnLayout {
     id: root
     spacing: 4

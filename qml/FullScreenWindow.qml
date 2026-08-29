@@ -2,17 +2,11 @@ import QtQuick 2.15
 import RinUI
 import QtQuick.Window 2.15
 
-// 注意：QtQuick.Window 必须在 RinUI 之后 import，否则根 Window 会被解析为
-// RinUI 的 Window（带标题栏/最小化最大化关闭按钮/纯色背景），导致插件窗口
-// 出现系统窗口控件与纯色底。
+// QtQuick.Window 必须在 RinUI 之后 import，否则根 Window 会被解析为 RinUI 的 Window（带系统控件与纯色底）
 Window {
     id: root
     visible: false
-    // flags 绑定到模式、浮层与小组件图层：特殊模式或右键菜单/设置页弹出时置顶；
-    // 正常模式跟随图层策略（置顶/置底/普通互斥），与主程序 updateLayer() 思路一致
-    // （由 Python 后端计算 layerTopmost/layerBottommost 状态，QML 绑定据此设 flags）。
-    // 这样绑定在 popupOpen/mode/图层状态变化重新求值时始终返回正确标志，
-    // 不会把 Python 设置的置顶清掉；置顶状态稳定后也无需每秒刷新。
+    // flags 绑定模式、浮层与图层：特殊模式/浮层置顶；正常模式跟随图层策略（互斥），置顶稳定后无需每秒刷新
     flags: {
         var baseFlags = Qt.FramelessWindowHint | Qt.Tool;
         // 特殊模式或浮层弹出：置顶
@@ -30,10 +24,7 @@ Window {
     }
     color: "transparent"
 
-    // 窗口可见性：特殊模式时全屏，正常模式时普通窗口。
-    // 注意：必须让 visibility 尊重 visible（避免 "Conflicting properties 'visible'
-    // and 'visibility'" 冲突导致窗口启动即显示）：visible:false 创建时保持 Hidden，
-    // 由 Python 端 show()/hide() 控制显示后再按模式决定全屏/窗口化。
+    // visibility 须尊重 visible（避免 visible/visibility 冲突启动即显示）：visible:false 时保持 Hidden，由 Python 控制显示
     visibility: {
         if (!visible)
             return Window.Hidden
@@ -67,10 +58,7 @@ Window {
         objectName: "uiLoader"
         source: "LessonsDisplay.qml"
         asynchronous: false
-        // 根据模式动态绑定位置和宽度（单窗口直接过渡：特殊模式时胶囊铺满全屏）
-        // 注意：特殊模式宽度用 root.width（Window 本身）而非 parent.width——parent 是
-        // Window 的 contentItem（QQuickRootItem），其宽度可能为 0，会导致
-        // LessonsDisplay 布局错乱。
+        // 特殊模式宽度须用 root.width（parent 为 contentItem，隐藏时宽度可能为 0 导致布局错乱）
         x: lessonsBackend.mode === "normal" ? lessonsBackend.uiX : 4
         y: lessonsBackend.mode === "normal" ? lessonsBackend.uiY : 4
         width: lessonsBackend.mode === "normal" ? lessonsBackend.uiWidth : root.width - 8
@@ -112,10 +100,7 @@ Window {
         }
     }
 
-    // 动画性能优化：纯平移动画（x/y）结束时通知后端恢复 mask。
-    // x/y 动画可能同时/先后停止，后端用引用计数保证只恢复一次。
-    // 宽度变化触发的 x/y 动画也会走到这里，但后端 _anim_optimize_active 为
-    // False 时 endTranslateAnim 直接返回，不会误恢复 mask。
+    // 纯平移动画结束时通知后端恢复 mask（后端用引用计数保证只恢复一次）
     function onTranslateAnimStopped() {
         lessonsBackend.endTranslateAnim()
     }
@@ -137,9 +122,7 @@ Window {
         Qt.callLater(checkLoader)
     }
 
-    // 插件深浅色 → RinUI 主题同步：RinUI 控件（RoundButton/滚动条/右键菜单等）
-    // 样式由 RinUI 决定；深浅色由一般/特殊模式 + 系统主题共同决定
-    // （whiteboard 浅、blackboard 深、normal 随系统主题）。
+    // 插件深浅色 → RinUI 主题同步（whiteboard 浅、blackboard 深、normal 随系统主题）
     function syncRinuiTheme() {
         var dark = lessonsBackend.mode === "whiteboard" ? false
             : lessonsBackend.mode === "blackboard" ? true
@@ -154,8 +137,7 @@ Window {
         function onThemeChanged() { root.syncRinuiTheme() }
     }
 
-    // 特殊模式启动动画（背景淡入、胶囊展开等，时长 400ms）播放完成后发出信号，
-    // 通知已准备好的专用全屏窗口直接显示（无渐变动画），覆盖在主窗口上方。
+    // 特殊模式启动动画（400ms）完成后发信号，通知专用全屏窗口直接显示
     Timer {
         id: specialAnimTimer
         interval: 400
@@ -174,17 +156,14 @@ Window {
         onSettingsRequested: settingsDialog.openDialog()
     }
 
-    // 右键触发 + 菜单已打开时关闭。
-    // 菜单未打开：右键在空白/胶囊处打开；菜单已打开：点击空白（右键关闭，左键由
-    // closePolicy 关闭）不再重新打开。
+    // 右键打开菜单；已打开时再点空白关闭（左键由 closePolicy 关闭）不再重开
     MouseArea {
         id: rightClickArea
         anchors.fill: parent
         acceptedButtons: Qt.RightButton
         propagateComposedEvents: true
         z: 999
-        // 记录右键按下时菜单是否已打开：若已打开，松开后（closePolicy 已关闭菜单）
-        // 不应在空白处再次打开
+        // 记录按下时菜单是否已打开，避免松开后在空白处重开
         property bool pressWhileOpen: false
         onPressed: {
             if (widgetMenu.opened) {
@@ -201,8 +180,7 @@ Window {
         }
     }
 
-    // 设置对话框（复用 RinUI Dialog，模态遮罩在 Overlay 层，天然位于最上层）：
-    // 打开时禁用 mask（否则遮罩/对话框被窗口 mask 裁剪），关闭时恢复。
+    // 设置对话框：模态遮罩在 Overlay 层天然最上层；打开时禁用 mask（否则被裁剪），关闭时恢复
     SettingsDialog {
         id: settingsDialog
     }

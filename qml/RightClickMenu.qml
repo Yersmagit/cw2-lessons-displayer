@@ -4,13 +4,9 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import RinUI
 
-// 右键菜单（模仿主程序小组件右键菜单，复用 RinUI 的 Menu/MenuItem/MenuSeparator）。
-// 一般模式：仅"设置"；特殊模式（白板/熄屏）：额外提供"退出xx模式"。
-// 定位规则（在菜单显示前完成）：右键点在胶囊形 UI 内 → 菜单放到胶囊下边框下方 5px；
-// 否则在鼠标位置；随后避让屏幕边缘（优先级更高）。
-// 打开动画与主程序小组件菜单一致：从上至下平移 + 展开 + 渐变。
-// 菜单打开前通知后端移除窗口 mask（使菜单可显示在胶囊外且动画全程可见），关闭时恢复 mask。
-// 左键/右键点击菜单以外区域或按 Esc 均关闭菜单（右键由窗口 MouseArea 关闭并避免重开）。
+// 右键菜单（模仿主程序小组件，复用 RinUI Menu）：一般模式仅"设置"，特殊模式加"退出xx模式"。
+// 定位：右键在胶囊内→胶囊下边框下方 5px，否则鼠标位置，随后避让屏幕边缘；
+// 打开动画从上至下平移+展开+渐变；打开前移除 mask、关闭时恢复。
 Menu {
     id: root
 
@@ -19,8 +15,7 @@ Menu {
 
     position: Position.None  // 手动定位到鼠标位置，不跳到父项下方
 
-    // 打开动画：与主程序小组件右键菜单一致（从上至下边平移边渐变）。
-    // 手动定位时 position 为 None，RinUI 默认动画 from==to 无位移，这里自行实现。
+    // 打开动画（手动定位时 position 为 None，RinUI 默认动画无位移，自行实现）
     enter: Transition {
         ParallelAnimation {
             NumberAnimation {
@@ -47,9 +42,7 @@ Menu {
         }
     }
 
-    // 点击菜单以外区域（release 在菜单外）或按 Esc 时关闭（处理左键点击空白关闭）。
-    // 不用 CloseOnPressOutside：菜单常显示在鼠标/胶囊附近，打开瞬间鼠标在菜单外，
-    // 该策略会让菜单一打开就被关闭。
+    // release 在菜单外或 Esc 关闭；不用 CloseOnPressOutside（打开瞬间鼠标在菜单外会一开就关）
     closePolicy: Popup.CloseOnReleaseOutside | Popup.CloseOnEscape
 
     // 是否处于特殊模式（决定是否显示"退出xx模式"项）
@@ -89,9 +82,7 @@ Menu {
         var targetX = x
         var targetY = y
 
-        // 避让胶囊形 UI：右键点在胶囊区域内时，菜单放到胶囊下边框下方 5px（横坐标不变）。
-        // 正常模式胶囊=小组件本体（uiX/uiY/uiWidth）；特殊模式胶囊=顶部课程条
-        // （左上角 4,4，宽度=屏幕宽-8）。
+        // 避让胶囊：右键在胶囊内则菜单放到其下边框下方 5px（正常模式=小组件本体，特殊模式=顶部课程条）
         var capX, capY, capW
         if (lessonsBackend.mode === "normal") {
             capX = lessonsBackend.uiX
@@ -121,8 +112,7 @@ Menu {
 
         root.x = targetX
         root.y = targetY
-        // 打开前移除 mask：使打开动画（平移+渐变）在无 mask 的窗口上全程可见；
-        // 同时强制所有插件窗口置顶（宿主窗口 winId 早已存在，open 前置顶即可生效）
+        // 打开前移除 mask 使动画全程可见，并强制所有插件窗口置顶
         lessonsBackend.hideWidgetMask()
         lessonsBackend.holdTopmost()
         root.open()
