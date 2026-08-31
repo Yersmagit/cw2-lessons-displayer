@@ -64,14 +64,20 @@ jobs:
           unzip -l *.cwplugin | grep qml/ && echo "✅ .cwplugin includes qml/" || echo "❌ .cwplugin missing qml/"
           unzip -l *.zip | grep qml/ && echo "✅ .zip includes qml/" || echo "❌ .zip missing qml/"
       
+      - name: Get version from tag
+        run: |
+          # 版本号 = tag 去掉前导 v；含 "-" 后缀（如 1.1.0-alpha）判定为预发布
+          echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
+          IS_PRE=$([[ "${GITHUB_REF#refs/tags/v}" == *-* ]] && echo true || echo false)
+          echo "IS_PRERELEASE=${IS_PRE}" >> $GITHUB_ENV
+
       - name: Publish to plugin registry
+        # 预发布（alpha/beta 等）不上架插件广场，只有正式版才发布到插件广场
+        if: env.IS_PRERELEASE != 'true'
         env:
           CWPT_TOKEN: ${{ secrets.CWPT_TOKEN }}
         run: |
           cw-plugin-publish
-      
-      - name: Get version from tag
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
       
       - name: Generate changelog with git-cliff
         run: |
@@ -88,7 +94,8 @@ jobs:
         with:
           name: Release v${{ env.VERSION }}
           draft: false
-          prerelease: false
+          # 预发布版本（含 - 后缀）标记为 GitHub Pre-release
+          prerelease: ${{ env.IS_PRERELEASE == 'true' }}
           files: |
             *.cwplugin
             *.zip
