@@ -15,6 +15,10 @@ Item {
         return lessonsBackend.isDarkTheme
     }
 
+    // 特殊模式 + 交互智能平板（底部工具栏显示）时隐藏顶部圆形按钮（工具栏已提供退出/切换）
+    readonly property bool showTopButtons: lessonsBackend.mode === "normal"
+        || settingsBackend.getString("device_type") !== "interactive_panel"
+
     // 背景颜色：特殊模式纯色，正常模式半透明（透明度已乘系数）
     readonly property color bgColor: {
         if (lessonsBackend.mode === "whiteboard") {
@@ -102,7 +106,9 @@ Item {
         // 换课按钮（禁用）
         RoundButton {
             id: switchButton
+            objectName: "topSwitchButton"
             enabled: false
+            visible: root.showTopButtons
             implicitWidth: 30 * lessonsBackend.scaleFactor
             implicitHeight: 30 * lessonsBackend.scaleFactor
             icon.name: "ic_fluent_arrow_swap_20_regular"
@@ -111,7 +117,7 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
         }
 
-        Item { width: 16 * lessonsBackend.scaleFactor; height: parent.height }
+        Item { width: 16 * lessonsBackend.scaleFactor; height: parent.height; visible: root.showTopButtons }
 
         // 左侧居中空白：内容放得下时把列表夹在中间；放不下时宽度为 0，列表占满剩余空间
         Item {
@@ -686,11 +692,13 @@ Item {
             width: centerSpacerWidth()
         }
 
-        Item { width: 16 * lessonsBackend.scaleFactor; height: parent.height }
+        Item { width: 16 * lessonsBackend.scaleFactor; height: parent.height; visible: root.showTopButtons }
 
         // 按钮1：白板模式/切换
         RoundButton {
             id: button1
+            objectName: "topButton1"
+            visible: root.showTopButtons
             enabled: !lessonsBackend.switching  // 窗口切换期间禁用，防止误操作
             hoverEnabled: true  // 使 hovered 生效，用于文本提示
             implicitWidth: 30 * lessonsBackend.scaleFactor
@@ -714,11 +722,13 @@ Item {
             }
         }
 
-        Item { width: 12 * lessonsBackend.scaleFactor; height: parent.height }
+        Item { width: 12 * lessonsBackend.scaleFactor; height: parent.height; visible: root.showTopButtons }
 
         // 按钮2：熄屏模式/退出
         RoundButton {
             id: button2
+            objectName: "topButton2"
+            visible: root.showTopButtons
             enabled: !lessonsBackend.switching  // 窗口切换期间禁用，防止误操作
             hoverEnabled: true  // 使 hovered 生效，用于文本提示
             implicitWidth: 30 * lessonsBackend.scaleFactor
@@ -836,8 +846,12 @@ Item {
     }
 
     // 列表可用宽度（固定：总宽减去两侧固定元素，不依赖 ListView 自身 contentWidth）
+    // 特殊模式 + 交互智能平板时顶部三个按钮隐藏（showTopButtons=false），这些按钮不再占位，
+    // 固定宽度只计左右边距（13+13）；否则列表被算窄 134px、整体偏左不水平居中。
     function availableListViewWidth() {
-        var fixedWidth = (13 + 30 + 16 + 16 + 30 + 12 + 30 + 13) * lessonsBackend.scaleFactor
+        var fixedWidth = root.showTopButtons
+            ? (13 + 30 + 16 + 16 + 30 + 12 + 30 + 13) * lessonsBackend.scaleFactor
+            : (13 + 13) * lessonsBackend.scaleFactor
         return root.width - fixedWidth
     }
 

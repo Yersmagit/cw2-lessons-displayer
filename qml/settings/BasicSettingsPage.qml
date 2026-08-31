@@ -15,6 +15,51 @@ ColumnLayout {
         text: "基本"
     }
 
+    // 设备类型：默认展开，两个单选项并排且互斥；自动保存
+    SettingExpander {
+        Layout.fillWidth: true
+        icon.name: "ic_fluent_tablet_20_regular"
+        title: "设备类型"
+        description: "选择“交互智能平板”后将提供笔书写功能"
+        expanded: true
+
+        SettingItem {
+            // syncing 区分"程序化同步"与"用户变更"；初始为 true，避免初始化期 checked 赋值误写回
+            // RadioButton 经 action 默认属性进内部 rightContent，须用 id 显式引用 syncing
+            id: deviceItem
+            property bool syncing: true
+
+            ButtonGroup { id: deviceGroup }
+
+            RadioButton {
+                id: interactiveRadio
+                text: "交互智能平板"
+                ButtonGroup.group: deviceGroup
+                onCheckedChanged: {
+                    if (!deviceItem.syncing && checked)
+                        settingsBackend.setString("device_type", "interactive_panel")
+                }
+            }
+            RadioButton {
+                id: projectorRadio
+                text: "投影设备或其他"
+                ButtonGroup.group: deviceGroup
+                onCheckedChanged: {
+                    if (!deviceItem.syncing && checked)
+                        settingsBackend.setString("device_type", "projector")
+                }
+            }
+
+            Component.onCompleted: {
+                if (settingsBackend.getString("device_type") === "interactive_panel")
+                    interactiveRadio.checked = true
+                else
+                    projectorRadio.checked = true
+                deviceItem.syncing = false
+            }
+        }
+    }
+
     SettingCard {
         Layout.fillWidth: true
         icon.name: "ic_fluent_layer_20_regular"

@@ -6,12 +6,17 @@ Class Widgets 2.0 - 今日课程显示插件 (独立全屏窗口版)
 import os
 import sys
 import json
+import time
+import sqlite3
 import ctypes
 import darkdetect
 from loguru import logger
-from PySide6.QtCore import QObject, QUrl, Slot, Property, Signal, QTimer, QEvent
-from PySide6.QtGui import QGuiApplication, QScreen, QRegion, QCursor
+from PySide6.QtCore import QObject, QUrl, Slot, Property, Signal, QTimer, QEvent, QPointF, QSize
+from PySide6.QtGui import (QGuiApplication, QScreen, QRegion, QCursor,
+                           QPainter, QPainterPath, QPen, QColor, QImage,
+                           QPolygonF)
 from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuick import QQuickImageProvider
 from ClassWidgets.SDK import CW2Plugin
 from PySide6.QtCore import Qt
 
@@ -36,6 +41,7 @@ DEFAULT_SETTINGS = {
     "auto_close_after_class": True, # 下课后自动关闭特殊模式
     "auto_close_delay": 3,       # 下课后自动关闭的延迟时间数值
     "auto_close_unit": "min",    # 延迟时间单位：min(分)/sec(秒)
+    "device_type": "interactive_panel", # 设备类型：交互智能平板(interactive_panel)/投影设备或其他(projector)
 }
 
 SETTINGS_CONFIG_FILENAME = "settings.json"
@@ -45,6 +51,1236 @@ def _time_to_minutes(time_str: str) -> int:
     """将 "HH:MM" 格式的时间转换为分钟数"""
     h, m = map(int, time_str.split(':'))
     return h * 60 + m
+
+
+# 笔触逻辑颜色 → 实际显示色（light=浅色模式/白板、dark=深色模式/熄屏）。
+# 存储用逻辑名（如 "mono"/"red"），显示时按当前模式取对应 hex；
+# 切换模式时已画笔触的显示色随之切换（重放时按最新模式解析）。
+_PEN_COLOR_MAP = {
+    "mono":   {"light": "#000000", "dark": "#FFFFFF"},   # 黑/白（白板黑、熄屏白）
+    "red":    {"light": "#C62828", "dark": "#EF5350"},
+    "blue":   {"light": "#1565C0", "dark": "#42A5F5"},
+    "green":  {"light": "#2E7D32", "dark": "#66BB6A"},
+    "orange": {"light": "#EF6C00", "dark": "#FFA726"},
+    "yellow": {"light": "#F9A825", "dark": "#FFEE58"},
+    "cyan":   {"light": "#00838F", "dark": "#4DD0E1"},
+    "purple": {"light": "#6A1B9A", "dark": "#AB47BC"},
+}
+
+
+def _pen_display_color(logical, light):
+    """笔触逻辑颜色名 → 当前模式显示 hex；未知（如旧数据的 hex）原样返回。"""
+    entry = _PEN_COLOR_MAP.get(logical)
+    if not entry:
+        return logical
+    return entry["light" if light else "dark"]
+
+
+def _stroke_path(points, width):
+    """把笔划点列（逻辑坐标）平滑成 Catmull-Rom → 三次贝塞尔 QPainterPath。
+
+    相邻两点之间用一段三次贝塞尔曲线，其两个控制点由前后相邻点决定
+    （Catmull-Rom 张力 1/6），曲线精确穿过每个输入点，绘制再快、采样点
+    再稀疏也不会出现折线。首/末段以端点自身做镜像补点，避免端部切线突变。
+    单点或全部重合（零长度）的退化路径回退为圆点（笔=圆点、橡皮=点擦圆），
+    否则 Qt 不渲染零长度线段的 round cap，点擦/单击会失效。
+    """
+    path = QPainterPath()
+    if not points:
+        return path
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    if len(points) == 1 or (max(xs) - min(xs) < 0.01 and max(ys) - min(ys) < 0.01):
+        x, y = points[0]
+        r = max(0.5, width / 2.0)
+        path.addEllipse(QPointF(x, y), r, r)
+        return path
+
+    def _pt(i):
+        return QPointF(points[i][0], points[i][1])
+
+    n = len(points)
+    path.moveTo(points[0][0], points[0][1])
+    for i in range(n - 1):
+        p0 = _pt(max(0, i - 1))
+        p1 = _pt(i)
+        p2 = _pt(i + 1)
+        p3 = _pt(min(n - 1, i + 2))
+        c1 = QPointF(p1.x() + (p2.x() - p0.x()) / 6.0,
+                     p1.y() + (p2.y() - p0.y()) / 6.0)
+        c2 = QPointF(p2.x() - (p3.x() - p1.x()) / 6.0,
+                     p2.y() - (p3.y() - p1.y()) / 6.0)
+        path.cubicTo(c1, c2, p2)
+    return path
+
+
+def _draw_stroke(painter, stroke, light=True):
+    """在给定 QPainter 上绘制一笔（pen 用颜色描边 / eraser 用 Clear 擦除）。
+
+    注意：QPainter 的合成模式会跨调用持续，重放时橡皮（Clear）后的笔画必须
+    显式回到 SourceOver，否则后续笔画会被错误地"擦除"。
+    单点/重合点（点状笔迹）用 fillPath 填充闭合圆，避免被 pen 描边再放大
+    一倍（addEllipse 半径=width/2 + width 描边 → 外径=width，直径=2*width）。
+    pen 颜色为逻辑名（"mono"/"red"...），按 light（是否浅色模式）解析为显示 hex。
+    """
+    if not stroke or not stroke.get("points"):
+        return
+    points = stroke["points"]
+    width = stroke.get("width", 4.0)
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    is_dot = len(points) == 1 or (max(xs) - min(xs) < 0.01 and max(ys) - min(ys) < 0.01)
+    path = _stroke_path(points, width)
+    if stroke["op"] == "eraser":
+        painter.setCompositionMode(QPainter.CompositionMode_Clear)
+        if is_dot:
+            painter.fillPath(path, QColor(Qt.transparent))
+        else:
+            # 显式 NoBrush：防止被上一笔的 setBrush 残留填充（封闭路径会被填充）
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor(Qt.transparent), width,
+                                Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            painter.drawPath(path)
+    else:
+        color = _pen_display_color(stroke.get("color", "mono"), light)
+        painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        if is_dot:
+            painter.fillPath(path, QColor(color))
+        else:
+            # 显式 NoBrush：防止被上一笔的 setBrush 残留填充（封闭路径会被填充）
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor(color), width,
+                                Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            painter.drawPath(path)
+
+
+# 选择工具的统一选中蓝（描边/填充/矩形边框/虚线共用，深浅色一致）
+SELECTION_BLUE = "#1E88E5"
+
+
+def _draw_selection_outline(painter, stroke, light=True):
+    """在被选中笔划下方画 2px 蓝色描边（先画宽 width+4 的蓝色，再画原笔划覆盖 → 边缘留 2px 蓝）。
+
+    仅对 pen 笔划生效（橡皮是不可见的透明擦除区，不参与选择）。点状笔划先填
+    半径+2 的蓝色圆，再被原笔划覆盖 → 外围 2px 蓝圈。
+    """
+    if not stroke or stroke.get("op") != "pen" or not stroke.get("points"):
+        return
+    points = stroke["points"]
+    width = stroke.get("width", 4.0)
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    is_dot = len(points) == 1 or (max(xs) - min(xs) < 0.01 and max(ys) - min(ys) < 0.01)
+    painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+    if is_dot:
+        x, y = points[0]
+        r = max(0.5, width / 2.0) + 2.0
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(SELECTION_BLUE))
+        painter.drawEllipse(QPointF(x, y), r, r)
+        # 关键：重置 brush，否则残留蓝色会让后续 drawPath 填充封闭路径
+        painter.setBrush(Qt.NoBrush)
+    else:
+        path = _stroke_path(points, width)
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(QColor(SELECTION_BLUE), width + 4.0,
+                            Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.drawPath(path)
+
+
+class StrokeStore:
+    """特殊模式笔迹/橡皮数据的 SQLite 增量存储（支持撤销回滚的会话链）。
+
+    每个"画布会话"对应一个 data/canvas_<时间戳>.db 文件；每一步操作增量落盘：
+    - strokes 表：一笔一行的增量保存（pen/eraser），每笔 commit。
+    - ops 表：操作日志（add/clear/modify），记录每次增量操作，供撤销参考。
+    - meta 表：屏幕分辨率（像素宽高）/DPR/模式/创建时间，以及清屏链信息：
+      `prev_file`（本会话由哪个文件清屏而来）、`created_by`（"initial"/"clear"）。
+    清屏时保留旧文件、新建空白会话文件并记录 prev_file；撤销清屏时切回 prev_file、
+    删除空白文件，之后的笔迹写回旧文件。启动时 open_latest() 恢复最近一次会话。
+    """
+
+    def __init__(self, data_dir):
+        self._data_dir = data_dir
+        self._conn = None
+        self._db_path = None
+
+    def _ensure_dir(self):
+        try:
+            os.makedirs(self._data_dir, exist_ok=True)
+        except Exception as e:
+            plugin_logger.debug(f"创建数据目录失败: {e}")
+
+    @property
+    def db_path(self):
+        return self._db_path
+
+    @property
+    def has_session(self):
+        return self._conn is not None
+
+    @property
+    def data_dir(self):
+        """数据目录路径（供多页注册表 pages.json 使用）。"""
+        return self._data_dir
+
+    def current_file(self):
+        """当前会话文件名（basename）；无会话返回 None。"""
+        return os.path.basename(self._db_path) if self._db_path else None
+
+    def _ensure_tables(self):
+        """确保三张表存在（兼容旧文件：只有 meta/strokes，无 ops）。"""
+        try:
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS strokes("
+                " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                " op TEXT NOT NULL,"
+                " color TEXT,"
+                " width REAL,"
+                " points TEXT NOT NULL,"
+                " created_at TEXT)")
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS ops("
+                " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                " type TEXT NOT NULL,"
+                " data TEXT NOT NULL,"
+                " created_at TEXT)")
+            self._conn.commit()
+        except Exception as e:
+            plugin_logger.debug(f"建表失败: {e}")
+
+    def _write_meta(self, key, value):
+        try:
+            self._conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
+                               (key, str(value)))
+            self._conn.commit()
+        except Exception as e:
+            plugin_logger.debug(f"写 meta 失败: {e}")
+
+    def _meta_value(self, key, default=""):
+        if self._conn is None:
+            return default
+        try:
+            row = self._conn.execute(
+                "SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+            return row[0] if row else default
+        except Exception:
+            return default
+
+    def open_session(self, name):
+        """打开指定会话文件（basename）作为当前会话；不存在返回 False。"""
+        self.close()
+        if not name:
+            return False
+        path = os.path.join(self._data_dir, name)
+        if not os.path.exists(path):
+            return False
+        try:
+            self._db_path = path
+            self._conn = sqlite3.connect(path)
+            self._ensure_tables()
+            return True
+        except Exception as e:
+            plugin_logger.debug(f"打开会话文件失败: {e}")
+            self._conn = None
+            self._db_path = None
+            return False
+
+    def open_latest(self):
+        """恢复最近一次会话文件（跨进程重启后保留上次白板内容与清屏链）。"""
+        try:
+            names = [n for n in os.listdir(self._data_dir)
+                     if n.startswith("canvas_") and n.endswith(".db")]
+        except Exception:
+            names = []
+        if not names:
+            return False
+        try:
+            names.sort(key=lambda n: os.path.getmtime(os.path.join(self._data_dir, n)))
+        except Exception:
+            pass
+        return self.open_session(names[-1])
+
+    def new_session(self, screen_w, screen_h, dpr, mode,
+                    prev_file=None, created_by="initial"):
+        """结束当前会话（若有），新建空白会话文件并建表 + 写元数据。
+
+        prev_file=旧会话文件名、created_by="clear" 时，本文件记录"由清屏生成、
+        清屏前数据在 prev_file"——撤销清屏时据此切回旧文件（之后笔迹写回旧文件）。
+        """
+        self.close()
+        self._ensure_dir()
+        path = os.path.join(self._data_dir, f"canvas_{int(time.time() * 1000)}.db")
+        self._db_path = path
+        self._conn = sqlite3.connect(path)
+        try:
+            self._conn.execute("PRAGMA journal_mode=WAL")
+        except Exception:
+            pass
+        self._ensure_tables()
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        self._conn.executemany("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", [
+            ("screen_width", str(int(screen_w or 0))),
+            ("screen_height", str(int(screen_h or 0))),
+            ("device_pixel_ratio", str(float(dpr or 1.0))),
+            ("mode", str(mode or "")),
+            ("created_at", now),
+            ("prev_file", str(prev_file or "")),
+            ("created_by", str(created_by or "initial")),
+        ])
+        self._conn.commit()
+        plugin_logger.info(f"新建笔迹会话文件: {path} (created_by={created_by}, prev={prev_file})")
+        return path
+
+    def add_stroke(self, op, color, width, points):
+        """增量保存一笔（pen/eraser）；每笔即 commit，返回新行 id。"""
+        if self._conn is None:
+            return None
+        try:
+            cur = self._conn.execute(
+                "INSERT INTO strokes(op,color,width,points,created_at) VALUES(?,?,?,?,?)",
+                (op, color or "", float(width or 0.0),
+                 json.dumps([[float(x), float(y)] for x, y in points]),
+                 time.strftime("%Y-%m-%d %H:%M:%S")))
+            self._conn.commit()
+            return int(cur.lastrowid)
+        except Exception as e:
+            plugin_logger.debug(f"保存笔迹失败: {e}")
+            return None
+
+    def delete_stroke(self, stroke_id):
+        """删除一笔（撤销"新增"时回滚）。"""
+        if self._conn is None:
+            return
+        try:
+            self._conn.execute("DELETE FROM strokes WHERE id=?", (int(stroke_id),))
+            self._conn.commit()
+        except Exception as e:
+            plugin_logger.debug(f"删除笔迹失败: {e}")
+
+    def update_stroke(self, stroke_id, op, color, width, points):
+        """整行更新一笔（撤销/重做"修改"时回滚）。"""
+        if self._conn is None:
+            return
+        try:
+            self._conn.execute(
+                "UPDATE strokes SET op=?,color=?,width=?,points=? WHERE id=?",
+                (op, color or "", float(width or 0.0),
+                 json.dumps([[float(x), float(y)] for x, y in points]),
+                 int(stroke_id)))
+            self._conn.commit()
+        except Exception as e:
+            plugin_logger.debug(f"更新笔迹失败: {e}")
+
+    def log_op(self, op_type, data):
+        """把一次增量操作追加进当前会话的 ops 表（撤销日志，跨重启保留记录）。"""
+        if self._conn is None:
+            return
+        try:
+            self._conn.execute(
+                "INSERT INTO ops(type,data,created_at) VALUES(?,?,?)",
+                (op_type, json.dumps(data, ensure_ascii=False),
+                 time.strftime("%Y-%m-%d %H:%M:%S")))
+            self._conn.commit()
+        except Exception as e:
+            plugin_logger.debug(f"写操作日志失败: {e}")
+
+    def load_all(self):
+        """按绘制顺序读取全部笔迹（pen 与 eraser 交错，重放即还原画面），含 id。"""
+        if self._conn is None:
+            return []
+        try:
+            rows = self._conn.execute(
+                "SELECT id,op,color,width,points FROM strokes ORDER BY id").fetchall()
+            out = []
+            for sid, op, color, width, points in rows:
+                try:
+                    pts = json.loads(points)
+                except Exception:
+                    continue
+                out.append({"id": int(sid), "op": op, "color": color,
+                            "width": float(width),
+                            "points": [[float(x), float(y)] for x, y in pts]})
+            return out
+        except Exception as e:
+            plugin_logger.debug(f"读取笔迹失败: {e}")
+            return []
+
+    def remove_file(self, name):
+        """删除一个会话文件（含 -shm/-wal 侧文件）；用于撤销清屏时清理空白文件。"""
+        if not name:
+            return
+        for suffix in ("", "-shm", "-wal"):
+            try:
+                p = os.path.join(self._data_dir, name + suffix)
+                if os.path.exists(p):
+                    os.remove(p)
+            except Exception as e:
+                plugin_logger.debug(f"删除会话文件失败: {name}{suffix}: {e}")
+
+    def close(self):
+        if self._conn is not None:
+            try:
+                self._conn.commit()
+                self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
+
+
+class WhiteboardBackend(QObject):
+    """特殊模式笔迹数据 + 离屏烘焙（QQuickImageProvider 消费），渲染逻辑纯 Python。
+
+    QML 通过 Image（image://whiteboard/canvas）显示烘焙 QImage；每一次笔划变化
+    （begin/move/end/clear）递增 imageVersion 触发 QML 刷新。笔迹向量存于
+    _strokes，每笔完成经 StrokeStore 增量落盘；擦除全屏调用 clearAll() 新建会话。
+
+    选择工具：_selection 记录选中笔划 id；圈选/单击实时计算；选中笔划渲染 1px
+    蓝色描边（烘进 QImage）；确认后暴露 selectionRect/hasSelection 给 QML 画矩形
+    + 四角把手 + 浮动工具栏。缩放/平移/换色/换粗细修改向量并增量落盘。
+
+    撤销：_undo_stack 为增量操作栈（add/clear/modify），undo() 逐项回滚——
+    add→删除该笔、clear→切回清屏前文件并删空白文件（之后笔迹写回旧文件）、
+    modify→恢复旧数据。每次操作经 StrokeStore.log_op 追加进 ops 表。
+    """
+
+    imageVersionChanged = Signal()
+    selectionChanged = Signal()      # 选择状态/矩形/共同样式变化
+    canUndoChanged = Signal()        # 撤销栈变化
+    pageChanged = Signal()           # 页数/当前页变化（翻页/加页/撤销清屏等）
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._strokes = []       # 全部向量笔迹（含橡皮），含 id
+        self._image = QImage()   # 烘焙画布（逻辑像素尺寸）
+        self._active = None      # 进行中笔迹 {op,color,width,points}
+        self._last_pt = None
+        self._base = None        # 进行中笔划的基础图快照（仅含已完成笔划）
+        self._store = None
+        self._screen = (0, 0, 1.0, "")   # (宽, 高, dpr, mode) 逻辑像素
+        self._canvas_size = (1, 1)
+        self._image_version = 0
+        self._light = True
+        # 选择状态
+        self._selection = []       # 选中笔划 id 列表
+        self._sel_active = False   # 是否已确认（松开鼠标后）
+        self._sel_rect = None      # [x, y, w, h]
+        self._sel_poly = None      # 圈选中的多边形点 [[x,y], ...]
+        self._sel_color = ""       # 选中笔划共同逻辑色（不同=空串）
+        self._sel_width = 0        # 共同粗细（不同=0）
+        # 拖拽组合修改快照（一次拖拽合并为一次撤销）
+        self._modify_snapshot = None
+        # 撤销栈（增量操作日志：add/clear/modify/delete）
+        self._undo_stack = []
+        # 多页结构：每页独立会话文件/笔迹/撤销栈（page=dict: file/strokes/undo）
+        self._pages = []
+        self._page_index = 0
+
+    # ---------- Python 侧接线 ----------
+    def set_store(self, store):
+        self._store = store
+
+    def set_screen_info(self, w, h, dpr, mode):
+        self._screen = (w, h, dpr or 1.0, mode)
+        self._light = (mode == "whiteboard")   # 白板=浅色
+
+    def set_canvas_size(self, w, h):
+        """设置画布逻辑尺寸（屏幕宽高），由 Plugin 接线时传入。"""
+        self._canvas_size = (max(1, int(w)), max(1, int(h)))
+
+    def load_strokes(self, strokes):
+        """载入既有笔迹并整幅重放渲染（进入特殊模式时恢复上次内容）。
+
+        多页结构：优先按 data/pages.json 注册表恢复各页（每页独立会话文件/笔迹），
+        否则默认单页（映射当前会话文件）。注册表缺失/损坏时退化为单页。
+        """
+        self._strokes = list(strokes or [])
+        self._pages = []
+        self._page_index = 0
+        reg = self._load_page_registry()
+        if reg and reg.get("pages"):
+            for f in reg["pages"]:
+                st = []
+                if self._store and f and self._store.open_session(f):
+                    st = self._store.load_all()
+                self._pages.append({"file": f, "strokes": st, "undo": []})
+            self._page_index = max(0, min(int(reg.get("current", 0) or 0),
+                                          len(self._pages) - 1))
+            cur = self._pages[self._page_index]["file"]
+            if self._store:
+                if not (cur and self._store.open_session(cur)):
+                    # 当前页文件缺失（异常）→ 重建空白会话
+                    w, h, dpr, mode = self._screen
+                    self._store.new_session(w, h, dpr, mode)
+                    self._pages[self._page_index]["file"] = self._store.current_file()
+                    self._save_page_registry()
+            self._strokes = self._pages[self._page_index]["strokes"]
+            self._undo_stack = self._pages[self._page_index]["undo"]
+        else:
+            self._pages = [{"file": self._store.current_file() if self._store else None,
+                            "strokes": self._strokes, "undo": self._undo_stack}]
+            self._page_index = 0
+        self._ensure_image()
+        self._render_all()
+        self._bump()
+
+    def image(self):
+        """当前烘焙图像（供 ImageProvider 返回）。"""
+        return self._image
+
+    # ---------- 内部 ----------
+    def _bump(self):
+        self._image_version += 1
+        self.imageVersionChanged.emit()
+
+    def _ensure_image(self):
+        """确保烘焙画布尺寸正确；不符（含初始）则重建并从向量笔迹重放。"""
+        w, h = self._canvas_size
+        if self._image.isNull() or self._image.width() != w or self._image.height() != h:
+            self._image = QImage(w, h, QImage.Format_ARGB32_Premultiplied)
+            self._image.fill(Qt.transparent)
+            if self._strokes:
+                p = QPainter(self._image)
+                p.setRenderHint(QPainter.Antialiasing)
+                for s in self._strokes:
+                    _draw_stroke(p, s, self._light)
+                p.end()
+
+    def _redraw_active(self):
+        """把进行中的整笔（含全部采样点）用平滑贝塞尔路径重绘。
+
+        每次 move 都以基础图快照（仅含已完成笔划）为底重画当前整笔，因此
+        实时显示与最终落盘/重放完全一致，绘制再快也圆滑无折线；橡皮（Clear
+        合成）也天然正确——每次都从基础图重新推算出擦除区域。
+        """
+        if not self._active or self._base is None:
+            return
+        self._image = self._base.copy()
+        p = QPainter(self._image)
+        p.setRenderHint(QPainter.Antialiasing)
+        _draw_stroke(p, self._active, self._light)
+        p.end()
+
+    def _render_all(self):
+        self._ensure_image()
+        self._image.fill(Qt.transparent)
+        p = QPainter(self._image)
+        p.setRenderHint(QPainter.Antialiasing)
+        sel = set(self._selection or [])
+        for s in self._strokes:
+            if s.get("id") in sel and s.get("op") == "pen":
+                _draw_selection_outline(p, s, self._light)
+            _draw_stroke(p, s, self._light)
+        p.end()
+
+    # ---------- QML 槽 ----------
+    @Slot(str)
+    def setMode(self, mode):
+        """模式切换（whiteboard↔blackboard）时更新浅/深色并重放所有笔触，
+        使已画笔触的显示色随之切换（黑/白互变、彩色深浅互变）。
+        """
+        light = (mode == "whiteboard")
+        if light != self._light:
+            self._light = light
+            self._render_all()
+            self._bump()
+
+    # ---------- QML 槽 ----------
+    @Slot(int, str, float, float, float)
+    def beginStroke(self, op, color, width, x, y):
+        """开始一笔：op 0=pen 1=eraser；width 为笔划粗细/橡皮直径。
+
+        笔的起点不画独立圆（避免每笔起点出现一个大圆点）；橡皮按下即擦（点擦圆）。
+        """
+        self._active = {"op": "pen" if op == 0 else "eraser",
+                        "color": color or "", "width": float(width),
+                        "points": [[float(x), float(y)]]}
+        self._last_pt = (float(x), float(y))
+        self._ensure_image()
+        self._base = self._image.copy()   # 快照：仅含已完成笔划
+        if self._active["op"] == "eraser":
+            self._redraw_active()
+            self._bump()
+
+    @Slot(float, float)
+    def moveStroke(self, x, y):
+        if not self._active:
+            return
+        cur = (float(x), float(y))
+        if abs(cur[0] - self._last_pt[0]) < 0.5 and abs(cur[1] - self._last_pt[1]) < 0.5:
+            return
+        self._active["points"].append([cur[0], cur[1]])
+        self._last_pt = cur
+        self._redraw_active()
+        self._bump()
+
+    @Slot()
+    def endStroke(self):
+        """结束一笔：加入向量并增量落盘（图像已实时烘焙），压入撤销栈。"""
+        if not self._active:
+            return
+        if self._active["points"]:
+            if self._active["op"] == "pen" and len(self._active["points"]) == 1:
+                # 笔单击（按下即松、未拖动）→ 补一个起点小点，保证有点痕
+                self._redraw_active()
+                self._bump()
+            if self._store:
+                a = self._active
+                sid = self._store.add_stroke(a["op"], a.get("color"),
+                                             a.get("width", 0.0), a["points"])
+                if sid is not None:
+                    a["id"] = int(sid)
+                    self._push_undo({"type": "add", "id": int(sid)})
+            self._strokes.append(self._active)
+        self._active = None
+        self._last_pt = None
+        self._base = None
+
+    @Slot()
+    def clearAll(self):
+        """擦除全屏：清空画布并新建空白会话（旧数据文件保留）。
+
+        新文件 meta 记录 prev_file（清屏前文件）与 created_by="clear"；撤销清屏
+        时据此切回旧文件、删除空白文件，之后的笔迹写回旧文件。
+        """
+        prev = self._store.current_file() if self._store else None
+        self._strokes = []
+        self._active = None
+        self._last_pt = None
+        self._base = None
+        self._selection = []
+        self._sel_rect = None
+        self._sel_active = False
+        self._ensure_image()
+        self._image.fill(Qt.transparent)
+        if self._store:
+            w, h, dpr, mode = self._screen
+            self._store.new_session(w, h, dpr, mode, prev_file=prev, created_by="clear")
+            created = self._store.current_file()
+            self._push_undo({"type": "clear", "prev_file": prev, "created_file": created})
+            # 当前页映射到新的空白会话文件（翻页/重启后仍指向正确文件）
+            self._sync_current_page_file()
+        self._bump()
+        self.selectionChanged.emit()
+
+    @Slot()
+    def cancelStroke(self):
+        """取消进行中的一笔（如切出画布），不落盘。"""
+        self._active = None
+        self._last_pt = None
+        self._base = None
+
+    @Property(int, notify=imageVersionChanged)
+    def imageVersion(self):
+        return self._image_version
+
+    # ---------- 笔划几何辅助 ----------
+    def _stroke_dense_points(self, stroke, steps=8):
+        """把笔划的 Catmull-Rom→三次贝塞尔路径离散化为密集点列（包含/命中判定用）。
+
+        与渲染用的 _stroke_path 同一构造，保证判定与所见一致；点状/重合退化返回单点。
+        """
+        points = stroke.get("points") or []
+        if not points:
+            return []
+        if len(points) == 1:
+            return [[points[0][0], points[0][1]]]
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        if max(xs) - min(xs) < 0.01 and max(ys) - min(ys) < 0.01:
+            return [[points[0][0], points[0][1]]]
+
+        def _pt(i):
+            return QPointF(points[i][0], points[i][1])
+
+        n = len(points)
+        out = [[points[0][0], points[0][1]]]
+        for i in range(n - 1):
+            p0 = _pt(max(0, i - 1))
+            p1 = _pt(i)
+            p2 = _pt(i + 1)
+            p3 = _pt(min(n - 1, i + 2))
+            c1 = QPointF(p1.x() + (p2.x() - p0.x()) / 6.0,
+                         p1.y() + (p2.y() - p0.y()) / 6.0)
+            c2 = QPointF(p2.x() - (p3.x() - p1.x()) / 6.0,
+                         p2.y() - (p3.y() - p1.y()) / 6.0)
+            for k in range(1, steps + 1):
+                t = k / steps
+                mt = 1.0 - t
+                x = mt ** 3 * p1.x() + 3 * mt * mt * t * c1.x() \
+                    + 3 * mt * t * t * c2.x() + t ** 3 * p2.x()
+                y = mt ** 3 * p1.y() + 3 * mt * mt * t * c1.y() \
+                    + 3 * mt * t * t * c2.y() + t ** 3 * p2.y()
+                out.append([x, y])
+        return out
+
+    def _stroke_bbox(self, stroke, pad=0.0):
+        """笔划点包围盒 [x, y, w, h]（可选外扩 pad=宽度/2 以包含笔划厚度）。"""
+        pts = stroke.get("points") or []
+        if not pts:
+            return None
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        return [min(xs) - pad, min(ys) - pad,
+                max(xs) - min(xs) + pad * 2, max(ys) - min(ys) + pad * 2]
+
+    # ---------- 选择：内部 ----------
+    def _select_ids(self, ids):
+        """设置选中笔划 id 集合并重绘（圈选过程中实时调用）。"""
+        self._selection = list(ids)
+        self._update_selection_style()
+        self._render_all()
+        self._bump()
+        self.selectionChanged.emit()
+
+    def _update_selection_style(self):
+        """计算选中笔划的共同逻辑色与粗细（不同则空/0，供浮动菜单高亮）。"""
+        colors = set()
+        widths = set()
+        for s in self._strokes:
+            if s.get("id") in self._selection:
+                colors.add((s.get("color") or "") or "mono")
+                widths.add(float(s.get("width", 4.0)))
+        self._sel_color = colors.pop() if len(colors) == 1 else ""
+        self._sel_width = int(round(widths.pop())) if len(widths) == 1 else 0
+
+    def _compute_selection_rect(self):
+        """按选中笔划（含厚度）计算包围矩形，确认选择状态。"""
+        if not self._selection:
+            self._sel_rect = None
+            self._sel_active = False
+            return
+        xs = []
+        ys = []
+        for s in self._strokes:
+            if s.get("id") not in self._selection:
+                continue
+            bb = self._stroke_bbox(s, float(s.get("width", 4.0)) / 2.0)
+            if bb:
+                xs.extend([bb[0], bb[0] + bb[2]])
+                ys.extend([bb[1], bb[1] + bb[3]])
+        if not xs:
+            self._sel_rect = None
+            self._sel_active = False
+            return
+        minx, miny = min(xs), min(ys)
+        maxx, maxy = max(xs), max(ys)
+        self._sel_rect = [minx, miny, maxx - minx, maxy - miny]
+        self._sel_active = True
+
+    def _select_inside_polygon(self):
+        """圈选：把被闭合多边形完全包裹（所有离散点在内）的 pen 笔划选为候选。"""
+        poly_pts = self._sel_poly or []
+        if len(poly_pts) < 3:
+            self._select_ids([])
+            return
+        poly = QPolygonF([QPointF(p[0], p[1]) for p in poly_pts])
+        pb = poly.boundingRect()
+        sel = []
+        for s in self._strokes:
+            if s.get("op") != "pen":
+                continue
+            bb = self._stroke_bbox(s)
+            if bb is None:
+                continue
+            # 快速剔除：笔划包围盒须整体落在多边形包围盒内（否则不可能完全包裹）
+            if (bb[0] < pb.left() - 0.01 or bb[1] < pb.top() - 0.01
+                    or bb[0] + bb[2] > pb.right() + 0.01
+                    or bb[1] + bb[3] > pb.bottom() + 0.01):
+                continue
+            dense = self._stroke_dense_points(s)
+            ok = True
+            for p in dense:
+                if not poly.containsPoint(QPointF(p[0], p[1]), Qt.OddEvenFill):
+                    ok = False
+                    break
+            if ok:
+                sel.append(s.get("id"))
+        self._select_ids(sel)
+
+    def _hit_stroke(self, x, y):
+        """返回点击点命中的最近 pen 笔划 id（距离中心线 <= 半宽+3px），否则 None。"""
+        best = None
+        best_d2 = float('inf')
+        for s in self._strokes:
+            if s.get("op") != "pen":
+                continue
+            tol = max(float(s.get("width", 4.0)) / 2.0, 3.0) + 3.0
+            dense = self._stroke_dense_points(s)
+            for p in dense:
+                d2 = (p[0] - x) ** 2 + (p[1] - y) ** 2
+                if d2 <= tol * tol and d2 < best_d2:
+                    best_d2 = d2
+                    best = s.get("id")
+        return best
+
+    @staticmethod
+    def _point_in_rect(x, y, r):
+        return bool(r) and r[0] <= x <= r[0] + r[2] and r[1] <= y <= r[1] + r[3]
+
+    # ---------- 选择：QML 槽 ----------
+    @Slot('QVariantList')
+    def beginSelection(self, points):
+        """开始圈选：清除旧的已确认矩形/工具栏状态，记录多边形并实时计算被包裹笔划。"""
+        self._sel_active = False
+        self._sel_rect = None
+        self._sel_poly = [[float(p[0]), float(p[1])] for p in (points or [])]
+        self._select_inside_polygon()
+
+    @Slot('QVariantList')
+    def updateSelection(self, points):
+        """圈选过程中多边形变化：重算被包裹笔划。"""
+        self._sel_poly = [[float(p[0]), float(p[1])] for p in (points or [])]
+        self._select_inside_polygon()
+
+    @Slot()
+    def endSelection(self):
+        """松开鼠标：结束圈选，固定选中集合并计算边界矩形（QML 据此画矩形+把手+工具栏）。"""
+        self._sel_poly = None
+        self._compute_selection_rect()
+        self._update_selection_style()
+        self._render_all()
+        self._bump()
+        self.selectionChanged.emit()
+
+    @Slot()
+    def cancelSelection(self):
+        """取消圈选（鼠标取消事件）：不确认选择，清空。"""
+        self._sel_poly = None
+        self._selection = []
+        self._sel_rect = None
+        self._sel_active = False
+        self._sel_color = ""
+        self._sel_width = 0
+        self._render_all()
+        self._bump()
+        self.selectionChanged.emit()
+
+    @Slot(float, float)
+    def clickSelect(self, x, y):
+        """单击选择：命中某笔划则单选该笔划；未命中：点在已选矩形内则保留，否则取消。"""
+        x, y = float(x), float(y)
+        hit = self._hit_stroke(x, y)
+        if hit is not None:
+            self._selection = [hit]
+            self._sel_poly = None
+            self._compute_selection_rect()
+            self._update_selection_style()
+            self._render_all()
+            self._bump()
+            self.selectionChanged.emit()
+        elif self._sel_active and self._point_in_rect(x, y, self._sel_rect):
+            pass  # 在选中矩形内点空白 → 保持选择
+        else:
+            self.clearSelection()
+
+    @Slot()
+    def clearSelection(self):
+        """清除选择：去掉蓝色描边/矩形/浮动工具栏。"""
+        self._sel_poly = None
+        self._selection = []
+        self._sel_rect = None
+        self._sel_active = False
+        self._sel_color = ""
+        self._sel_width = 0
+        self._render_all()
+        self._bump()
+        self.selectionChanged.emit()
+
+    @Slot(float, float, float, float)
+    def applyTransform(self, x1, y1, w1, h1):
+        """把选中笔划映射到目标矩形 (x1,y1,w1,h1)（平移或等比缩放）。
+
+        以"当前选择矩形 _sel_rect"为基准逐事件映射（而非按下时的快照）：连续拖拽
+        产生的多次事件不会累积误差，笔迹与矩形严格同步跟随鼠标；撤销由
+        beginModify/endModify 把一次拖拽合并为一次操作。
+        """
+        r = self._sel_rect
+        if not r or not self._selection:
+            return
+        x0, y0, w0, h0 = r
+        if w0 <= 0 or h0 <= 0:
+            return
+        for s in self._strokes:
+            if s.get("id") not in self._selection or s.get("op") != "pen":
+                continue
+            new_pts = []
+            for px, py in s.get("points", []):
+                new_pts.append([x1 + (px - x0) * (w1 / w0),
+                                y1 + (py - y0) * (h1 / h0)])
+            s["points"] = new_pts
+            if self._store:
+                self._store.update_stroke(s["id"], s.get("op"), s.get("color", ""),
+                                          s.get("width", 4.0), s["points"])
+        # 选择矩形直接采用目标矩形（角点/边框精确跟随鼠标，笔迹严格在其中）
+        self._sel_rect = [x1, y1, w1, h1]
+        self._sel_active = True
+        self._update_selection_style()
+        self._render_all()
+        self._bump()
+        self.selectionChanged.emit()
+
+    @Slot()
+    def beginModify(self):
+        """开始一次组合修改（拖拽平移/缩放）：记录选中笔划的旧快照。"""
+        self._modify_snapshot = []
+        for s in self._strokes:
+            if s.get("id") in self._selection:
+                self._modify_snapshot.append({
+                    "id": s["id"],
+                    "old": {"op": s.get("op"), "color": s.get("color", ""),
+                            "width": s.get("width", 4.0),
+                            "points": [list(p) for p in s.get("points", [])]}})
+
+    @Slot()
+    def endModify(self):
+        """结束组合修改：数据有变化则压入一次 modify 撤销操作；无变化（纯点击）忽略。"""
+        if not self._modify_snapshot:
+            return
+        changes = []
+        for item in self._modify_snapshot:
+            sid = item["id"]
+            old = item["old"]
+            for s in self._strokes:
+                if s.get("id") == sid:
+                    new = {"op": s.get("op"), "color": s.get("color", ""),
+                           "width": s.get("width", 4.0),
+                           "points": [list(p) for p in s.get("points", [])]}
+                    if new != old:
+                        changes.append({"id": sid, "old": old})
+                    break
+        self._modify_snapshot = None
+        if changes:
+            self._push_undo({"type": "modify", "changes": changes})
+
+    @Slot(int)
+    def setSelectionWidth(self, w):
+        """给选中笔划统一换粗细。"""
+        w = float(int(w))
+        if w <= 0 or not self._selection:
+            return
+        changes = []
+        for s in self._strokes:
+            if s.get("id") not in self._selection or s.get("op") != "pen":
+                continue
+            old = {"op": s.get("op"), "color": s.get("color", ""),
+                   "width": s.get("width", 4.0),
+                   "points": [list(p) for p in s.get("points", [])]}
+            s["width"] = w
+            changes.append({"id": s.get("id"), "old": old})
+            if self._store:
+                self._store.update_stroke(s["id"], s.get("op"), s.get("color", ""),
+                                          w, s["points"])
+        if changes:
+            self._push_undo({"type": "modify", "changes": changes})
+        self._update_selection_style()
+        self._render_all()
+        self._bump()
+        self.selectionChanged.emit()
+
+    @Slot(str)
+    def setSelectionColor(self, color):
+        """给选中笔划统一换颜色（逻辑名，显示 hex 随模式映射）。"""
+        if not self._selection:
+            return
+        color = color or ""
+        changes = []
+        for s in self._strokes:
+            if s.get("id") not in self._selection or s.get("op") != "pen":
+                continue
+            old = {"op": s.get("op"), "color": s.get("color", ""),
+                   "width": s.get("width", 4.0),
+                   "points": [list(p) for p in s.get("points", [])]}
+            s["color"] = color
+            changes.append({"id": s.get("id"), "old": old})
+            if self._store:
+                self._store.update_stroke(s["id"], s.get("op"), color,
+                                          s.get("width", 4.0), s["points"])
+        if changes:
+            self._push_undo({"type": "modify", "changes": changes})
+        self._update_selection_style()
+        self._render_all()
+        self._bump()
+        self.selectionChanged.emit()
+
+    # ---------- 多页：注册表 ----------
+    def _load_page_registry(self):
+        """读取 data/pages.json 页注册表（页顺序 + 当前页索引）；无/损坏返回 None。"""
+        if not self._store:
+            return None
+        try:
+            p = os.path.join(self._store.data_dir, "pages.json")
+            if not os.path.exists(p):
+                return None
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    def _save_page_registry(self):
+        """把当前页顺序/当前页索引写回 pages.json（翻页/加页/清屏改文件映射时调用）。"""
+        if not self._store:
+            return
+        try:
+            p = os.path.join(self._store.data_dir, "pages.json")
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump({"pages": [pg.get("file") for pg in self._pages],
+                           "current": self._page_index}, f, ensure_ascii=False)
+        except Exception as e:
+            plugin_logger.debug(f"保存页注册表失败: {e}")
+
+    def _sync_current_page_file(self):
+        """当前页的会话文件记录与 store 当前文件同步（清屏/撤销清屏改文件后调用）。"""
+        if self._store and 0 <= self._page_index < len(self._pages):
+            self._pages[self._page_index]["file"] = self._store.current_file()
+            self._save_page_registry()
+
+    # ---------- 多页：QML 槽 ----------
+    @Slot()
+    def prevPage(self):
+        """上一页。"""
+        self._switch_to_page(self._page_index - 1)
+
+    @Slot()
+    def nextPage(self):
+        """下一页（末页的"加页"走 addPage）。"""
+        self._switch_to_page(self._page_index + 1)
+
+    @Slot()
+    def addPage(self):
+        """新增一页（最多 10 页）：保存当前页内存状态，新建空白会话文件作为新页并切换过去。"""
+        if len(self._pages) >= 10:
+            return
+        self.cancelStroke()
+        self._pages[self._page_index]["file"] = self._store.current_file() if self._store else None
+        self._pages[self._page_index]["strokes"] = self._strokes
+        self._pages[self._page_index]["undo"] = self._undo_stack
+        if self._store:
+            w, h, dpr, mode = self._screen
+            self._store.new_session(w, h, dpr, mode)
+            new_file = self._store.current_file()
+        else:
+            new_file = None
+        self._strokes = []
+        self._undo_stack = []
+        self._pages.append({"file": new_file, "strokes": self._strokes,
+                            "undo": self._undo_stack})
+        self._page_index = len(self._pages) - 1
+        self._sel_poly = None
+        self._selection = []
+        self._sel_rect = None
+        self._sel_active = False
+        self._sel_color = ""
+        self._sel_width = 0
+        self._ensure_image()
+        self._image.fill(Qt.transparent)
+        self._save_page_registry()
+        self._render_all()
+        self._bump()
+        self.selectionChanged.emit()
+        self.canUndoChanged.emit()
+        self.pageChanged.emit()
+
+    def _switch_to_page(self, index):
+        """切到指定页（0-based）：保存当前页内存状态，打开目标页会话文件并载入其笔迹/撤销栈。"""
+        n = len(self._pages)
+        if index < 0 or index >= n or index == self._page_index:
+            return
+        self.cancelStroke()
+        self._pages[self._page_index]["file"] = self._store.current_file() if self._store else None
+        self._pages[self._page_index]["strokes"] = self._strokes
+        self._pages[self._page_index]["undo"] = self._undo_stack
+        self._page_index = index
+        page = self._pages[index]
+        if self._store:
+            if page["file"]:
+                if not self._store.open_session(page["file"]):
+                    w, h, dpr, mode = self._screen
+                    self._store.new_session(w, h, dpr, mode)
+                    page["file"] = self._store.current_file()
+            else:
+                w, h, dpr, mode = self._screen
+                self._store.new_session(w, h, dpr, mode)
+                page["file"] = self._store.current_file()
+        self._strokes = page["strokes"]
+        self._undo_stack = page["undo"]
+        # 切页后旧选择/圈选失效 → 清除
+        self._sel_poly = None
+        self._selection = []
+        self._sel_rect = None
+        self._sel_active = False
+        self._sel_color = ""
+        self._sel_width = 0
+        self._save_page_registry()
+        self._render_all()
+        self._bump()
+        self.selectionChanged.emit()
+        self.canUndoChanged.emit()
+        self.pageChanged.emit()
+
+    # ---------- 选择：删除选中 ----------
+    @Slot()
+    def deleteSelection(self):
+        """删除选中笔划（浮动工具栏"删除"按钮）：内存/存储同步删除，记录一次可撤销操作。"""
+        if not self._selection:
+            return
+        ids = set(self._selection)
+        removed = [s for s in self._strokes if s.get("id") in ids]
+        if not removed:
+            return
+        self._strokes = [s for s in self._strokes if s.get("id") not in ids]
+        if self._store:
+            for s in removed:
+                self._store.delete_stroke(s["id"])
+        self._push_undo({"type": "delete", "strokes": [
+            {"id": int(s.get("id", 0)), "op": s.get("op", "pen"),
+             "color": s.get("color", ""), "width": float(s.get("width", 4.0)),
+             "points": [list(p) for p in (s.get("points") or [])]}
+            for s in removed]})
+        self._sel_poly = None
+        self._selection = []
+        self._sel_rect = None
+        self._sel_active = False
+        self._sel_color = ""
+        self._sel_width = 0
+        self._render_all()
+        self._bump()
+        self.selectionChanged.emit()
+
+    # ---------- 撤销 ----------
+    def _push_undo(self, op):
+        """压入撤销栈并追加进当前会话 ops 表（增量操作日志）。"""
+        self._undo_stack.append(op)
+        self.canUndoChanged.emit()
+        if self._store:
+            self._store.log_op(op.get("type", ""), op)
+
+    @Slot()
+    def undo(self):
+        """撤销上一步操作（新增笔划/清屏/移动/缩放/换色/换粗细均可撤销）。"""
+        if not self._undo_stack:
+            return
+        op = self._undo_stack.pop()
+        try:
+            t = op.get("type")
+            if t == "add":
+                sid = op.get("id")
+                self._strokes = [s for s in self._strokes if s.get("id") != sid]
+                if self._store:
+                    self._store.delete_stroke(sid)
+            elif t == "clear":
+                prev = op.get("prev_file")
+                created = op.get("created_file")
+                if self._store and prev:
+                    # 切回清屏前的文件，加载其笔迹；空白文件的内容已全部撤销 → 删除
+                    self._store.open_session(prev)
+                    self._strokes = self._store.load_all()
+                    if created:
+                        self._store.remove_file(created)
+                    # 当前页重新映射到旧文件（之后笔迹写回旧文件）
+                    self._sync_current_page_file()
+                else:
+                    self._strokes = []
+            elif t == "delete":
+                # 撤销删除：把被删笔划重新落盘（新 id），按原 id 排序放回原位保持绘制顺序
+                for st in op.get("strokes", []):
+                    sid = None
+                    if self._store:
+                        sid = self._store.add_stroke(st.get("op", "pen"),
+                                                     st.get("color", ""),
+                                                     st.get("width", 4.0),
+                                                     st.get("points") or [])
+                    self._strokes.append({
+                        "_orig_id": int(st.get("id", 0)),
+                        "id": int(sid) if sid is not None else int(st.get("id", 0)),
+                        "op": st.get("op", "pen"),
+                        "color": st.get("color", ""),
+                        "width": float(st.get("width", 4.0)),
+                        "points": [list(p) for p in (st.get("points") or [])]})
+                self._strokes.sort(key=lambda s: s.get("_orig_id", s.get("id", 0)))
+            elif t == "modify":
+                for ch in op.get("changes", []):
+                    sid = ch.get("id")
+                    old = ch.get("old") or {}
+                    for s in self._strokes:
+                        if s.get("id") == sid:
+                            s["op"] = old.get("op", s.get("op", "pen"))
+                            s["color"] = old.get("color", "")
+                            s["width"] = float(old.get("width", 4.0))
+                            s["points"] = [list(p) for p in old.get("points", [])]
+                            if self._store:
+                                self._store.update_stroke(
+                                    sid, s["op"], s["color"], s["width"], s["points"])
+                            break
+        except Exception as e:
+            plugin_logger.debug(f"撤销失败: {e}")
+        # 撤销后旧选择可能引用已删/已改的笔划 → 清除选择
+        self._sel_poly = None
+        self._selection = []
+        self._sel_rect = None
+        self._sel_active = False
+        self._sel_color = ""
+        self._sel_width = 0
+        self._render_all()
+        self._bump()
+        self.selectionChanged.emit()
+        self.canUndoChanged.emit()
+
+    # ---------- 选择/撤销属性 ----------
+    @Property(bool, notify=selectionChanged)
+    def hasSelection(self):
+        return bool(self._sel_active and self._selection)
+
+    @Property('QVariantList', notify=selectionChanged)
+    def selectionRect(self):
+        return list(self._sel_rect) if self._sel_rect else []
+
+    @Property(str, notify=selectionChanged)
+    def selectionColor(self):
+        return self._sel_color
+
+    @Property(int, notify=selectionChanged)
+    def selectionWidth(self):
+        return self._sel_width
+
+    @Property(bool, notify=canUndoChanged)
+    def canUndo(self):
+        return bool(self._undo_stack)
+
+    # ---------- 多页属性 ----------
+    @Property(int, notify=pageChanged)
+    def pageCount(self):
+        return len(self._pages)
+
+    @Property(int, notify=pageChanged)
+    def currentPage(self):
+        return self._page_index
+
+    @Property(bool, notify=pageChanged)
+    def canGoPrev(self):
+        return self._page_index > 0
+
+    @Property(bool, notify=pageChanged)
+    def canGoNext(self):
+        return self._page_index < len(self._pages) - 1
+
+    @Property(bool, notify=pageChanged)
+    def canAddPage(self):
+        return len(self._pages) < 10
+
+
+class WhiteboardImageProvider(QQuickImageProvider):
+    """把 WhiteboardBackend 的烘焙 QImage 提供给 QML Image（image://whiteboard/...）。"""
+
+    def __init__(self, backend):
+        super().__init__(QQuickImageProvider.Image)
+        self._backend = backend
+
+    def requestImage(self, id, size, requestedSize):
+        return self._backend.image()
 
 
 class LessonsBackend(QObject):
@@ -64,6 +1300,10 @@ class LessonsBackend(QObject):
     countdownStyleChanged = Signal()
     remainingTextChanged = Signal()
     widgetRadiusChanged = Signal()
+    # 绘图工具状态（特殊模式工具栏）：activeTool 0=选择 1=笔 2=橡皮；笔粗细/颜色
+    activeToolChanged = Signal()
+    penWidthChanged = Signal()
+    penColorChanged = Signal()
 
     def __init__(self, plugin):
         super().__init__()
@@ -122,6 +1362,52 @@ class LessonsBackend(QObject):
         # 外围圆角半径（跟随主程序 widget_corner_radius 配置换算）
         self._widget_radius = 27.0
         self._update_widget_radius()
+
+        # 绘图工具状态（特殊模式工具栏）：0=选择 1=笔 2=橡皮
+        self._active_tool = 0
+        # 笔工具：粗细(2/4/6px)与颜色（hex）；颜色空串=自动跟随模式（浅色黑/深色白）
+        self._pen_width = 4
+        self._pen_color = ""
+
+    @Slot(int)
+    def setActiveTool(self, tool):
+        """设置当前绘图工具：0=选择 1=笔 2=橡皮"""
+        tool = int(tool)
+        if tool != self._active_tool:
+            self._active_tool = tool
+            self.activeToolChanged.emit()
+
+    @Slot(int)
+    def setPenWidth(self, width):
+        """设置笔划粗细：2/4/6 px"""
+        width = int(width)
+        if width != self._pen_width:
+            self._pen_width = width
+            self.penWidthChanged.emit()
+
+    @Slot(str)
+    def setPenColor(self, color):
+        """设置笔迹逻辑颜色名（mono/red/blue/green/orange/yellow/cyan/purple）；空串=自动（mono）"""
+        if color != self._pen_color:
+            self._pen_color = color or ""
+            self.penColorChanged.emit()
+
+    @Property(int, notify=activeToolChanged)
+    def activeTool(self):
+        return self._active_tool
+
+    @Property(int, notify=penWidthChanged)
+    def penWidth(self):
+        return self._pen_width
+
+    @Property(str, notify=penColorChanged)
+    def penColor(self):
+        """当前笔迹逻辑颜色名；未手动选择时默认 mono（黑/白，随模式自动切换显示色）。
+
+        存储/绘制都按逻辑名（如 "mono"/"red"），实际显示 hex 由当前模式映射
+        （白板浅色=深色/黑，熄屏深色=浅色/白），切换模式时已画笔触显示色随之切换。
+        """
+        return self._pen_color or "mono"
 
 
     def set_ui_opacity(self, opacity):
@@ -549,6 +1835,9 @@ class LessonsBackend(QObject):
         if self._mode != mode:
             self._mode = mode
             self.modeChanged.emit()
+            # 未手动选色时笔色跟随模式（白板黑/熄屏白），通知 QML 刷新菜单
+            if not self._pen_color:
+                self.penColorChanged.emit()
 
     @Slot()
     def enterWhiteboard(self):
@@ -1011,6 +2300,11 @@ class Plugin(CW2Plugin):
         # 特殊模式专用全屏窗口（进入特殊模式时创建，保证完全置顶）
         self.special_engine = None
         self.special_window = None
+
+        # 笔迹数据存储（SQLite，data/ 目录；擦除全屏时新建会话文件）
+        self._stroke_store = None
+        # 笔迹数据后端（特殊窗口引擎专用；随窗口销毁）
+        self._wb_backend = None
 
         # 贴边隐藏：主程序小组件隐藏时是否已真正隐藏插件主窗口（避免特殊模式
         # 与初始显示逻辑把它误当作"未显示"）；_hide_window_timer 用于延迟隐藏
@@ -1723,20 +3017,30 @@ class Plugin(CW2Plugin):
             return True
 
     def _force_topmost(self):
-        """重新强制窗口置顶并置为前台（Windows），确保全屏时覆盖任务栏。"""
+        """重新强制窗口置顶并置为前台（Windows），确保全屏时覆盖任务栏。
+
+        特殊模式下只操作专用窗口（special_window），绝不对主窗口 raise/设前台，
+        否则主窗口（同为 topmost 且后 raise）会盖住专用窗口导致工具栏"消失再显示"。
+        """
         if not self.window or not self.backend:
             return
         if self.backend.mode == "normal":
             return
         if sys.platform != 'win32':
             return
-        win = self._active_window()
+        # 特殊模式：始终针对专用窗口（即使 isVisible 短暂为 False 也不回退到主窗口）
+        if self.special_window:
+            win = self.special_window
+        else:
+            win = self.window
         if not win:
             return
         try:
-            # 先确保 Qt 层窗口标志一致（防止此前被意外清除导致置顶失效）
+            # 先确保 Qt 层窗口标志一致（防止此前被意外清除导致置顶失效/露出标题栏）
             if not (win.flags() & Qt.WindowStaysOnTopHint):
                 win.setFlag(Qt.WindowStaysOnTopHint, True)
+            if not (win.flags() & Qt.FramelessWindowHint):
+                win.setFlag(Qt.FramelessWindowHint, True)
             hwnd = int(win.winId())
             HWND_TOPMOST = -1
             SWP_NOMOVE = 0x0002
@@ -1799,6 +3103,23 @@ class Plugin(CW2Plugin):
             except Exception as e:
                 plugin_logger.debug(f"应用置顶失败: {e}")
 
+    def _ensure_stroke_store(self):
+        """确保笔迹 SQLite 存储就绪：优先恢复最近一次会话文件（跨进程保留白板内容
+        与清屏链 prev_file），无历史文件才新建初始会话。"""
+        if self._stroke_store is None:
+            self._stroke_store = StrokeStore(os.path.join(self.PATH, "data"))
+        if not self._stroke_store.has_session:
+            if self._stroke_store.open_latest():
+                plugin_logger.info("已恢复最近笔迹会话: "
+                                   + str(self._stroke_store.current_file()))
+                return
+            screen = QGuiApplication.primaryScreen()
+            geo = screen.geometry() if screen else None
+            dpr = float(screen.devicePixelRatio()) if screen else 1.0
+            self._stroke_store.new_session((geo.width() if geo else 0),
+                                           (geo.height() if geo else 0),
+                                           dpr, self.backend.mode if self.backend else "")
+
     def _prepare_special_window(self):
         """按钮按下时即开始创建专用全屏窗口（隐藏，暂不显示）。
 
@@ -1811,6 +3132,12 @@ class Plugin(CW2Plugin):
             return
         if self.special_window or self.special_engine:
             return
+        # 每次进入特殊模式重置为"选择"工具：工具栏 UI 默认选中"选择"，若沿用上次
+        # 留下的笔/橡皮后端状态，会出现"UI 显示选择但实际是笔/橡皮"的不一致
+        try:
+            self.backend.setActiveTool(0)
+        except Exception:
+            pass
         try:
             self.backend.set_switching(True)
             engine = QQmlApplicationEngine()
@@ -1819,6 +3146,25 @@ class Plugin(CW2Plugin):
             engine.rootContext().setContextProperty("suppressExpandAnim", True)
             if self.settings_backend:
                 engine.rootContext().setContextProperty("settingsBackend", self.settings_backend)
+            # 笔迹数据后端：须在 QML 加载前注册 context property 与 image provider，
+            # 并把上次会话笔迹载入（QML Image 通过 image://whiteboard/... 显示烘焙 QImage）
+            try:
+                self._ensure_stroke_store()
+                screen = QGuiApplication.primaryScreen()
+                geo = screen.geometry() if screen else None
+                dpr = float(screen.devicePixelRatio()) if screen else 1.0
+                sw = geo.width() if geo else 0
+                sh = geo.height() if geo else 0
+                wb = WhiteboardBackend()
+                wb.set_store(self._stroke_store)
+                wb.set_canvas_size(sw, sh)
+                wb.set_screen_info(sw, sh, dpr, self.backend.mode)
+                wb.load_strokes(self._stroke_store.load_all())
+                engine.rootContext().setContextProperty("whiteboardBackend", wb)
+                engine.addImageProvider("whiteboard", WhiteboardImageProvider(wb))
+                self._wb_backend = wb
+            except Exception as e:
+                plugin_logger.error(f"接线笔迹后端失败: {e}")
             # 复制主引擎的导入路径（保证 RinUI 等可用）
             try:
                 for p in self.engine.importPathList():
@@ -1837,6 +3183,11 @@ class Plugin(CW2Plugin):
             win = engine.rootObjects()[0]
             self.special_engine = engine
             self.special_window = win
+            # 创建即强制无边框工具窗口（QML flags 在某些环境可能未即时生效，这里兜底）
+            try:
+                win.setFlags(Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint)
+            except Exception:
+                pass
             # 事件过滤器：特殊模式下鼠标按下/移动时恢复隐藏的光标
             win.installEventFilter(self)
             # 保持隐藏，等待主窗口动画完成信号后直接显示
@@ -1860,9 +3211,14 @@ class Plugin(CW2Plugin):
             self.backend.set_switching(False)
             return
         try:
-            # 直接显示并设为全屏+置顶+前台（QML 不能写 visibility:FullScreen，会创建即显示，故在此由 Python 设置）
+            # 强制无边框工具窗口并铺满屏幕（不依赖 setWindowState(FullScreen)——
+            # Tool 窗口在 Windows 上 FullScreen 状态不可靠，可能露出系统标题栏/最小化关闭按钮）
+            self.special_window.setFlags(Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint)
+            screen = QGuiApplication.primaryScreen()
+            if screen:
+                self.special_window.setGeometry(screen.geometry())
             self.special_window.show()
-            self.special_window.setWindowState(Qt.WindowFullScreen)
+            self.special_window.raise_()
             self._force_topmost()
             # 主窗口保持可见在其下方（已渲染就绪），不隐藏
             self.backend.set_switching(False)
@@ -1873,6 +3229,12 @@ class Plugin(CW2Plugin):
 
     def _destroy_special_window(self):
         """销毁特殊模式专用窗口"""
+        if getattr(self, "_wb_backend", None):
+            try:
+                self._wb_backend.deleteLater()
+            except Exception:
+                pass
+            self._wb_backend = None
         if self.special_window:
             try:
                 self.special_window.close()
@@ -1915,16 +3277,37 @@ class Plugin(CW2Plugin):
             self._edge_hidden = False
             self._sync_hide_visibility()
         else:
-            # 进入特殊模式：主窗口 QML 全屏过渡显示，同时准备专用全屏窗口保证完全置顶
+            # 特殊模式（进入或白板↔熄屏切换）：先清零 mask 引用计数
             if self.backend:
                 self.backend._mask_hide_refs = 0
                 self.backend._anim_optimize_active = False
                 self.backend._anim_optimize_timer.stop()
+            # 模式间切换（白板↔熄屏）：专用窗口已存在并显示，若再对主窗口 raise/置顶/设前台
+            # 会盖住专用窗口（同为 topmost、主窗口后 raise 在上）导致工具栏"先消失再显示"。
+            # 直接返回，样式由 QML modeChanged 驱动直接更新；仅首次进入特殊模式才做窗口操作。
+            if self.special_window or self.special_engine:
+                # 防御：确保专用窗口保持在 Z 序最上（只顶专用窗口，不碰主窗口），
+                # 防止任何路径把主窗口 raise 到其上方遮挡工具栏。
+                if self.special_window and sys.platform == 'win32':
+                    try:
+                        hwnd = int(self.special_window.winId())
+                        HWND_TOPMOST = -1
+                        SWP_NOMOVE = 0x0002
+                        SWP_NOSIZE = 0x0001
+                        SWP_NOACTIVATE = 0x0010
+                        ctypes.windll.user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                                                          SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
+                        self.special_window.raise_()
+                    except Exception as e:
+                        plugin_logger.debug(f"模式切换保持专用窗口置顶失败: {e}")
+                return
+            # 首次进入特殊模式：主窗口 QML 全屏过渡显示，同时准备专用全屏窗口保证完全置顶
             # 若主程序贴边隐藏导致窗口被隐藏，进入特殊模式时须重新显示
             if self.window and not self.window.isVisible():
                 self.window.show()
             self.window.setMask(QRegion())
             self._mask_enabled = True
+            self.window.setFlag(Qt.FramelessWindowHint, True)
             self.window.setFlag(Qt.WindowStaysOnTopHint, True)
             self._last_mouse_pos = QCursor.pos()
             self._idle_seconds = 0
@@ -1966,6 +3349,13 @@ class Plugin(CW2Plugin):
                 self.window.removeEventFilter(self)
             except Exception:
                 pass
+        # 关闭笔迹 SQLite 存储（每笔已增量落盘，此处仅提交并释放句柄）
+        if self._stroke_store:
+            try:
+                self._stroke_store.close()
+            except Exception:
+                pass
+            self._stroke_store = None
         if self._cursor_timer:
             self._cursor_timer.stop()
             self._cursor_timer.deleteLater()
