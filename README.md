@@ -1,6 +1,6 @@
 <div align="center">
-<img src="icon.png" width="192px" alt="Lessons Displayer">
-<h1>Lessons Displayer</h1>
+<img src="icon.png" width="192px" alt="LessonBoard">
+<h1>LessonBoard 课程灵动条 & 手写板</h1>
 
 <p>看看今天有什么课？</p>
 

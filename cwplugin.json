@@ -1,11 +1,11 @@
 {
   "id": "com.yersmagit.lessonsdisplayer",
-  "name": "Lessons Displayer 全量展示课程",
+  "name": "LessonBoard 课程灵动条 & 手写板",
   "version": "1.1.0-alpha",
   "api_version": ">=0.2.0",
   "entry": "main.py",
   "author": "Yersmagit",
-  "description": "看看今天有什么课？或者想全屏展示你的课表？",
+  "description": "看看今天有什么课？或者试试更聪明的手写板？",
   "url": "https://github.com/Yersmagit/cw2-lessons-displayer",
   "readme": "README.md",
   "icon": "icon.png",

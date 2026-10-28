@@ -8,32 +8,48 @@ import RinUI
 // 打开/关闭时禁用/恢复窗口 mask（否则遮罩/对话框被裁剪）。
 Dialog {
     id: root
-    title: qsTr("Lessons Displayer 设置")
+    objectName: "pluginSettingsDialog"  // Python 侧（主程序设置页入口）findChild 用
+    title: qsTr("LessonBoard 设置")
     modal: true
     width: 680
     height: 520
     // 底部"关闭"按钮由 RinUI DialogButtonBox 自动渲染（与主程序一致）
     standardButtons: Dialog.Close
 
-    // 三个页面（标题 + 图标 + QML 文件）；"关于"页固定在侧边栏底部，单独用 aboutPage 定义
+    // 三个页面（标题 + 图标 + QML 文件）；"关于"页固定在侧边栏底部，单独用 aboutPage 定义。
+    // 特殊模式条目（specialMode:true）的标题/图标在 delegate 里随设备类型动态：
+    // 交互智能平板→"手写板模式"+whiteboard 图标；投影设备或其他→"特殊模式"+desktop 图标。
     property var pages: [
         { "title": "基本",     "icon": "ic_fluent_settings_20_regular",    "source": "settings/BasicSettingsPage.qml" },
-        { "title": "特殊模式", "icon": "ic_fluent_paint_brush_20_regular", "source": "settings/SpecialModeSettingsPage.qml" },
+        { "title": "特殊模式", "specialMode": true, "icon": "ic_fluent_paint_brush_20_regular", "source": "settings/SpecialModeSettingsPage.qml" },
         { "title": "高级",     "icon": "ic_fluent_options_20_regular",     "source": "settings/AdvancedSettingsPage.qml" }
     ]
     property var aboutPage: { "title": "关于", "icon": "ic_fluent_info_20_regular", "source": "settings/AboutSettingsPage.qml" }
     property int currentIndex: 0
 
-    // 打开：按模式选页，禁用 mask 并强制所有窗口置顶；每次强制重载页面（避免残留旧页面/滚动位置）
+    // 打开：按模式选页，禁用 mask 并强制所有窗口置顶；页面延迟到对话框显示且布局稳定后再加载
+    // （见 pageDelayTimer 注释），避免首次打开即展开折叠项时说明文字失踪。
     function openDialog() {
         currentIndex = (lessonsBackend.mode === "normal") ? 0 : 1
         sidebarList.currentIndex = currentIndex  // 同步侧边栏高亮（不能依赖绑定，见 sidebarList 注释）
-        // 强制重新加载当前 source 的页面（销毁旧实例并重建，source 绑定保持不变）
+        // 先卸载页面，待对话框显示且 contentItem 布局稳定（pageDelayTimer）后再加载
         pageLoader.active = false
-        pageLoader.active = true
         lessonsBackend.hideWidgetMask()
         lessonsBackend.holdTopmost()
         root.open()
+        pageDelayTimer.start()
+    }
+
+    // 页面延迟加载定时器：模态 Dialog 首次 open 时 contentItem 可能仍在布局（RinUI
+    // SettingExpander 的 header 布局会递归重排，中止后说明文字可能按错误尺寸布局而失踪——
+    // 手动"切到其他页再切回"（布局稳定后重建）即正常）。等 80ms 布局稳定后再加载页面。
+    Timer {
+        id: pageDelayTimer
+        interval: 80
+        repeat: false
+        onTriggered: {
+            pageLoader.active = true
+        }
     }
 
     // 关闭后恢复窗口 mask 与窗口层级，并重置页面索引（下次打开按模式重新选择）
@@ -82,12 +98,20 @@ Dialog {
                         contentItem: RowLayout {
                             spacing: 8
                             Icon {
-                                name: modelData.icon
+                                name: modelData.specialMode
+                                    ? (settingsBackend.deviceType === "interactive_panel"
+                                        ? "ic_fluent_whiteboard_20_regular"
+                                        : "ic_fluent_desktop_20_regular")
+                                    : modelData.icon
                                 size: 22
                             }
                             Text {
                                 wrapMode: Text.NoWrap
-                                text: modelData.title
+                                text: modelData.specialMode
+                                    ? (settingsBackend.deviceType === "interactive_panel"
+                                        ? "手写板模式"
+                                        : modelData.title)
+                                    : modelData.title
                                 elide: Text.ElideRight
                                 Layout.fillWidth: true
                                 Layout.rightMargin: 12
@@ -182,6 +206,8 @@ Dialog {
                     Layout.fillHeight: true
                     contentHeight: pageLoader.height
                     clip: true
+                    // 内容超出可视高度（可滚动）时显示 RinUI 滚动条（AsNeeded）
+                    ScrollBar.vertical: ScrollBar {}
 
                     Loader {
                         id: pageLoader

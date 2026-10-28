@@ -4,7 +4,6 @@ __pycache__/
 .venv/
 .idea/
 .vscode/
-lib/
 dist/
 build/
 *.egg-info/
@@ -16,3 +15,10 @@ _research_extract/
 # 插件运行期配置（一经用户配置即生成，不应提交/打包）
 settings.json
 log/
+
+# 本机开发/验证工具目录（离屏回归套件、渲染工具、桩、以及它们的产物 _dev_out/）——不入库
+_dev/
+# 兜底：万一有脚本在工作目录根上留下渲染图 / RinUI 配置残留
+_*.png
+RinUI/
+docs/CHANGELOG-unreleased.md

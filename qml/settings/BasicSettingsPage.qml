@@ -10,6 +10,9 @@ ColumnLayout {
     id: root
     spacing: 4
 
+    // 交互智能平板才有“手写板模式”右侧胶囊按钮；投影设备右侧是白板/熄屏双按钮（随设备类型自动刷新）
+    readonly property bool isPanel: settingsBackend.deviceType === "interactive_panel"
+
     Text {
         typography: Typography.BodyStrong
         text: "基本"
@@ -60,10 +63,17 @@ ColumnLayout {
         }
     }
 
+    // 第二分组标题（仿高级页）：与上方保持 8px 间距（ColumnLayout spacing 4 + 额外 4px）
+    Text {
+        typography: Typography.BodyStrong
+        text: "小组件"
+        Layout.topMargin: 4
+    }
+
     SettingCard {
         Layout.fillWidth: true
         icon.name: "ic_fluent_layer_20_regular"
-        title: "小组件图层"
+        title: "小组件层级"
         description: "控制本插件小组件的窗口层级"
 
         ComboBox {
@@ -90,6 +100,56 @@ ColumnLayout {
                 }
                 syncing = false
             }
+        }
+    }
+
+    // 手写板模式（平板设备顶部“手写板模式”胶囊按钮）：单击后打开的模式，默认黑板模式。
+    // 仅交互智能平板有该右侧胶囊；投影设备右侧是白板/熄屏双按钮 → 非平板禁用。
+    // SettingCard 本身无禁用样式（Frame），需 enabled 禁交互 + 整卡 opacity 弱化（同 Expander 0.65 淡法）
+    SettingCard {
+        Layout.fillWidth: true
+        enabled: root.isPanel
+        opacity: root.isPanel ? 1.0 : 0.6
+        Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutQuad } }
+        objectName: "specialModeCard"
+        icon.name: "ic_fluent_whiteboard_20_regular"
+        title: "手写板模式"
+        description: "单击课程列表右侧按钮后打开的模式"
+
+        ComboBox {
+            property bool syncing: true
+            model: ListModel {
+                ListElement { text: "黑板模式"; value: "blackboard" }
+                ListElement { text: "白板模式"; value: "whiteboard" }
+            }
+            textRole: "text"
+
+            onCurrentIndexChanged: {
+                if (!syncing)
+                    settingsBackend.setString("special_mode_action", model.get(currentIndex).value)
+            }
+
+            Component.onCompleted: {
+                for (var i = 0; i < model.count; i++) {
+                    if (model.get(i).value === settingsBackend.getString("special_mode_action")) {
+                        currentIndex = i
+                        break
+                    }
+                }
+                syncing = false
+            }
+        }
+    }
+
+    // 迷你模式时隐藏：小组件进入迷你模式时自动隐藏灵动条小组件（默认关闭，仅一般模式生效）
+    SettingCard {
+        Layout.fillWidth: true
+        icon.name: "ic_fluent_eye_off_20_regular"
+        title: "迷你模式时隐藏"
+        description: "在小组件进入迷你模式时不显示灵动条小组件"
+
+        SettingsSwitch {
+            settingKey: "hide_in_mini_mode"
         }
     }
 }

@@ -2,14 +2,14 @@ import QtQuick 2.15
 import Qt5Compat.GraphicalEffects
 
 // 自绘笔工具菜单（纯 Item，不依赖 Popup/Overlay，保证任何环境都能显示）：
-// - "粗细"：3 个圆，半径 = 笔划粗细(2/4/6px)，选中在圆外画 1px 边框（距内圆 2px）
+// - "粗细"：4 个圆，半径 = 笔划粗细(2/3/4.5/6px)，选中在圆外画 1px 边框（距内圆 2px）
 // - "颜色"：两排 × 4 色圆（半径 6px），浅色模式深色 / 深色模式浅色，白/黑随模式
 // 布局：每排第一个与最后一个竖直对齐，中间选项平均分布。
 // 背景/边框/阴影与工具栏胶囊一致（半透明灰 + 白色 1px 边框 + 阴影）。
 // 显示由 SpecialModeToolbar 通过 visible + x/y 定位控制。
 Item {
     id: root
-    signal widthSelected(int w)
+    signal widthSelected(real w)
     signal colorSelected(string color)
 
     // 深浅色（与工具栏一致：白板=浅色）
@@ -98,10 +98,10 @@ Item {
         }
         Row {
             width: parent.width
-            readonly property int n: 3
+            readonly property int n: 4
             spacing: (width - n * root.cellSize) / (n - 1)
             Repeater {
-                model: [2, 4, 6]
+                model: [2, 3, 4.5, 6]
                 delegate: OptionCell {
                     innerRadius: modelData + 2
                     fillColor: root.colorFor(lessonsBackend.penColor)

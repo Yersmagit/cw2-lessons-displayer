@@ -8,6 +8,18 @@ Item {
     id: root
     height: 54 * lessonsBackend.scaleFactor
 
+    // ===== 悬停渐隐（跟随主程序 interactions.hover_fade）=====
+    // 开启（仅一般模式；迷你模式同样生效——Python 判定点会反向 0.7 映射到源坐标）时：
+    // 透明度因子由 lessonsBackend.hoverFadeFactor（Python 全局鼠标坐标轮询驱动：按钮区 1 /
+    // 胶囊内非按钮 0.25 / 移出 1）驱动，渐隐/恢复带 200ms 渐变；非按钮区（课程列表带）由
+    // fadeBlock 拦截——不再接受鼠标事件（不滚动/不拖动），按钮区正常可点且有 hover。
+    readonly property bool hoverFadeActive: lessonsBackend.hoverFade
+        && lessonsBackend.mode === "normal"
+    opacity: lessonsBackend.hoverFadeFactor
+    Behavior on opacity {
+        NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
+    }
+
     // 根据模式计算实际暗色主题
     readonly property bool effectiveDarkTheme: {
         if (lessonsBackend.mode === "whiteboard") return false
@@ -15,9 +27,12 @@ Item {
         return lessonsBackend.isDarkTheme
     }
 
+    // 交互智能平板（区别于投影设备或其他）：决定顶栏按钮形态与设置页文案
+    readonly property bool isInteractivePanel: settingsBackend.deviceType === "interactive_panel"
+
     // 特殊模式 + 交互智能平板（底部工具栏显示）时隐藏顶部圆形按钮（工具栏已提供退出/切换）
     readonly property bool showTopButtons: lessonsBackend.mode === "normal"
-        || settingsBackend.getString("device_type") !== "interactive_panel"
+        || !root.isInteractivePanel
 
     // 背景颜色：特殊模式纯色，正常模式半透明（透明度已乘系数）
     readonly property color bgColor: {
@@ -103,21 +118,25 @@ Item {
         // 左侧固定边距
         Item { width: 13 * lessonsBackend.scaleFactor; height: parent.height }
 
-        // 换课按钮（禁用）
+        // 换课按钮：单击打开主程序换课窗口；悬停显示"换课"提示
         RoundButton {
             id: switchButton
             objectName: "topSwitchButton"
-            enabled: false
+            enabled: true
             visible: root.showTopButtons
+            hoverEnabled: true
             implicitWidth: 30 * lessonsBackend.scaleFactor
             implicitHeight: 30 * lessonsBackend.scaleFactor
             icon.name: "ic_fluent_arrow_swap_20_regular"
             icon.width: 18 * lessonsBackend.scaleFactor
             icon.height: 18 * lessonsBackend.scaleFactor
             anchors.verticalCenter: parent.verticalCenter
+            onClicked: {
+                lessonsBackend.openClassSwap()
+            }
         }
 
-        Item { width: 16 * lessonsBackend.scaleFactor; height: parent.height; visible: root.showTopButtons }
+        Item { width: 8 * lessonsBackend.scaleFactor; height: parent.height; visible: root.showTopButtons }
 
         // 左侧居中空白：内容放得下时把列表夹在中间；放不下时宽度为 0，列表占满剩余空间
         Item {
@@ -692,13 +711,14 @@ Item {
             width: centerSpacerWidth()
         }
 
-        Item { width: 16 * lessonsBackend.scaleFactor; height: parent.height; visible: root.showTopButtons }
+        // 右侧按钮区前 8px 间距（平板与投影均保留：分别衔接手写板胶囊 / 白板切换钮）
+        Item { width: 8 * lessonsBackend.scaleFactor; height: parent.height; visible: root.showTopButtons }
 
-        // 按钮1：白板模式/切换
+        // 按钮1：白板模式/切换（仅投影设备或其他显示）
         RoundButton {
             id: button1
             objectName: "topButton1"
-            visible: root.showTopButtons
+            visible: root.showTopButtons && !root.isInteractivePanel
             enabled: !lessonsBackend.switching  // 窗口切换期间禁用，防止误操作
             hoverEnabled: true  // 使 hovered 生效，用于文本提示
             implicitWidth: 30 * lessonsBackend.scaleFactor
@@ -722,13 +742,13 @@ Item {
             }
         }
 
-        Item { width: 12 * lessonsBackend.scaleFactor; height: parent.height; visible: root.showTopButtons }
+        Item { width: 10 * lessonsBackend.scaleFactor; height: parent.height; visible: root.showTopButtons && !root.isInteractivePanel }
 
         // 按钮2：熄屏模式/退出
         RoundButton {
             id: button2
             objectName: "topButton2"
-            visible: root.showTopButtons
+            visible: root.showTopButtons && !root.isInteractivePanel
             enabled: !lessonsBackend.switching  // 窗口切换期间禁用，防止误操作
             hoverEnabled: true  // 使 hovered 生效，用于文本提示
             implicitWidth: 30 * lessonsBackend.scaleFactor
@@ -749,12 +769,163 @@ Item {
             }
         }
 
-        Item { width: 13 * lessonsBackend.scaleFactor; height: parent.height }
+        // 手写板模式胶囊按钮（仅交互智能平板正常模式）：外壳尽量还原 RinUI RoundButton 样式
+        // （常态 controlQuaternary、悬停 controlSecondary、按下 controlTertiary+0.7、禁用 controlColor+0.65、
+        // 1px controlBorderColor 边框 + 胶囊圆角）；前景文字/图标用与顶栏一致的纯黑/白保持清晰（不灰）。
+        // 文字直接显示设置对应模式（黑板模式/白板模式，随 specialModeAction 自动刷新），点击进入该模式。
+        Item {
+            id: handboardButton
+            objectName: "topHandboardButton"
+            visible: root.showTopButtons && root.isInteractivePanel
+            enabled: !lessonsBackend.switching  // 窗口切换期间禁用，防止误操作
+            anchors.verticalCenter: parent.verticalCenter
+
+            // 内容前景色：与顶栏文字/图标一致（深色白、浅色黑），避免主题近黑灰显得发灰
+            readonly property color fgColor: effectiveDarkTheme ? "#ffffff" : "#000000"
+            // 当前设置将打开的模式
+            readonly property string actionMode: settingsBackend.specialModeAction === "whiteboard" ? "whiteboard" : "blackboard"
+            // 左右内边距（较 RinUI Button 默认 implicitWidth=row+26 略收紧，视觉更紧凑）
+            readonly property real padX: 10 * lessonsBackend.scaleFactor
+            // 高度较顶部圆形按钮（30）略高，使平板“xx模式”胶囊按钮更有辨识度
+            implicitHeight: 34 * lessonsBackend.scaleFactor
+            implicitWidth: hbRow.implicitWidth + 2 * padX
+            // 状态透明度仿 RinUI Button：禁用 0.65、按下 0.7、其余 1
+            opacity: !enabled ? 0.65 : (hbArea.pressed ? 0.7 : 1)
+            Behavior on opacity { NumberAnimation { duration: 120 } }
+
+            // 胶囊背景：主题色还原 RinUI RoundButton（非 flat）——常态/悬停/按下/禁用各取对应主题色
+            Rectangle {
+                id: handboardBg
+                anchors.fill: parent
+                radius: height / 2
+                border.width: Theme.currentTheme.appearance.borderWidth
+                border.color: Theme.currentTheme.colors.controlBorderColor
+                color: !handboardButton.enabled
+                    ? Theme.currentTheme.colors.controlColor
+                    : (hbArea.pressed
+                        ? Theme.currentTheme.colors.controlTertiaryColor
+                        : (hbArea.containsMouse
+                            ? Theme.currentTheme.colors.controlSecondaryColor
+                            : Theme.currentTheme.colors.controlQuaternaryColor))
+                Behavior on color { ColorAnimation { duration: Utils.appearanceSpeed; easing.type: Easing.OutQuart } }
+            }
+
+            // 内容：图标 + 模式文字（图标-文字间距略小于 RinUI Button row spacing 8）
+            Row {
+                id: hbRow
+                anchors.centerIn: parent
+                spacing: 6 * lessonsBackend.scaleFactor
+                Icon {
+                    id: hbIcon
+                    width: 18 * lessonsBackend.scaleFactor
+                    height: 18 * lessonsBackend.scaleFactor
+                    size: 18 * lessonsBackend.scaleFactor
+                    icon: "ic_fluent_whiteboard_20_regular"
+                    color: handboardButton.fgColor
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+                Text {
+                    id: hbText
+                    text: handboardButton.actionMode === "whiteboard" ? qsTr("白板模式") : qsTr("黑板模式")
+                    font.pixelSize: 13 * lessonsBackend.scaleFactor
+                    font.family: lessonsBackend.fontFamily
+                    font.weight: Font.Normal  // 不加粗（不随 lessonsBackend.fontWeight）
+                    color: handboardButton.fgColor
+                    verticalAlignment: Text.AlignVCenter
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+            }
+
+            MouseArea {
+                id: hbArea
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: lessonsBackend.enterHandboardMode()
+            }
+        }
+
+        // 尾部留白：平板时=按钮与胶囊上下间距一致（(胶囊高-按钮高)/2，比 13px 更小更贴合）；
+        // 投影设备保持 13px（无需调整）
+        Item {
+            width: root.isInteractivePanel
+                ? Math.max(0, (root.height - handboardButton.implicitHeight) / 2)
+                : 13 * lessonsBackend.scaleFactor
+            height: parent.height
+        }
+    }
+
+    // ===== 悬停渐隐：非按钮区拦截层 =====
+    // 覆盖"换课按钮右缘(13+30+8=51px) 至 右侧操作按钮带起点"之间的整段（课程列表 + 两侧留白），
+    // 即列表可用宽 availableListViewWidth()。开启时吞掉该区域全部鼠标/滚轮事件
+    // （课程列表不再接受鼠标事件——不滚动/不拖动/不弹菜单）；按钮带（左右两端）不在本层范围内，
+    // 鼠标在其上不渐隐、按钮正常可点有 hover。
+    MouseArea {
+        id: fadeBlock
+        visible: root.hoverFadeActive
+        enabled: root.hoverFadeActive
+        z: 5
+        x: (13 + 30 + 8) * lessonsBackend.scaleFactor
+        y: 0
+        width: availableListViewWidth()
+        height: root.height
+        hoverEnabled: true
+        acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+        cursorShape: Qt.ArrowCursor
+        onPressed: (mouse) => { mouse.accepted = true }
+        onReleased: (mouse) => { mouse.accepted = true }
+        onClicked: (mouse) => { mouse.accepted = true }
+        onDoubleClicked: (mouse) => { mouse.accepted = true }
+        onWheel: (wheel) => { wheel.accepted = true }
     }
 
     // ===== 按钮文本提示（tooltip）=====
     // 悬停按钮显示，x 居中于按钮、y 在胶囊下边框 5px；显示/隐藏 150ms 渐变。
     // 一般模式带 mask：显示时移除、隐藏淡出后恢复（引用计数避免与右键菜单冲突）。
+    Rectangle {
+        id: tooltip0
+        width: tip0Text.implicitWidth + 18
+        height: 30
+        radius: 6
+        border.width: 1
+        color: effectiveDarkTheme ? "#2c2c2c" : "#F9F9F9"
+        border.color: effectiveDarkTheme ? Qt.rgba(1, 1, 1, 0.2) : Qt.rgba(0, 0, 0, 0.0578)
+        x: switchButton.x + switchButton.width / 2 - width / 2
+        y: root.height + 5
+        z: 10
+        opacity: switchButton.hovered ? 1 : 0
+        visible: opacity > 0.01
+        Behavior on opacity {
+            NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+        }
+        property bool maskActive: false
+        onVisibleChanged: {
+            if (visible && !maskActive) {
+                lessonsBackend.hideWidgetMask()
+                maskActive = true
+            } else if (!visible && maskActive) {
+                fadeOutTimer0.start()
+            }
+        }
+        Timer {
+            id: fadeOutTimer0
+            interval: 160
+            onTriggered: {
+                if (tooltip0.maskActive && !tooltip0.visible) {
+                    lessonsBackend.showWidgetMask()
+                    tooltip0.maskActive = false
+                }
+            }
+        }
+        Text {
+            id: tip0Text
+            anchors.centerIn: parent
+            text: qsTr("换课")
+            font.pixelSize: 12 * lessonsBackend.scaleFactor
+            font.family: Qt.application.font.family
+            color: effectiveDarkTheme ? "#ffffff" : "#000000"
+        }
+    }
+
     Rectangle {
         id: tooltip1
         width: tip1Text.implicitWidth + 18
@@ -846,13 +1017,22 @@ Item {
     }
 
     // 列表可用宽度（固定：总宽减去两侧固定元素，不依赖 ListView 自身 contentWidth）
-    // 特殊模式 + 交互智能平板时顶部三个按钮隐藏（showTopButtons=false），这些按钮不再占位，
-    // 固定宽度只计左右边距（13+13）；否则列表被算窄 134px、整体偏左不水平居中。
+    // 特殊模式 + 交互智能平板时顶部按钮隐藏（showTopButtons=false），按钮不占位，
+    // 固定宽度只计左右边距（13+13）；否则按设备形态计右侧按钮占用：
+    // 投影设备=白板/熄屏双按钮；交互智能平板=单个"手写板模式"胶囊（宽度随内容，取按钮实际宽）。
     function availableListViewWidth() {
-        var fixedWidth = root.showTopButtons
-            ? (13 + 30 + 16 + 16 + 30 + 12 + 30 + 13) * lessonsBackend.scaleFactor
-            : (13 + 13) * lessonsBackend.scaleFactor
-        return root.width - fixedWidth
+        var s = lessonsBackend.scaleFactor
+        if (!root.showTopButtons) {
+            return root.width - (13 + 13) * s
+        }
+        if (root.isInteractivePanel) {
+            // 左：13 边距 + 换课 30 + 8；右：8 间距 + 胶囊按钮实际宽 + 尾部留白
+            //（尾部留白 = 按钮与胶囊上下间距一致 = (胶囊高-按钮高)/2，随按钮高度自动）
+            var tailPad = Math.max(0, (root.height - handboardButton.implicitHeight) / 2)
+            return root.width - (13 + 30 + 8) * s - (8 * s + tailPad) - handboardButton.width
+        }
+        // 投影设备：左=13+换课30+8；右=8+按钮1 30+12+按钮2 30+13
+        return root.width - (13 + 30 + 8 + 8 + 30 + 12 + 30 + 13) * s
     }
 
     // 居中 spacer 宽度：内容较窄时左右各占剩余一半使列表居中；超出时返回 0 让列表占满并可滚动
