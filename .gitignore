@@ -21,4 +21,5 @@ _dev/
 # 兜底：万一有脚本在工作目录根上留下渲染图 / RinUI 配置残留
 _*.png
 RinUI/
+
 docs/CHANGELOG-unreleased.md

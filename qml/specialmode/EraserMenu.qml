@@ -25,7 +25,7 @@ Item {
     readonly property int thumbGap: (trackH - thumbSize) / 2   // 滑块在轨道内的上下/左右间隙（=3）
 
     width: 140
-    height: 120
+    height: 104
 
     // 阴影与工具栏胶囊一致（半透明灰 13%）
     DropShadow {
@@ -48,7 +48,7 @@ Item {
     Column {
         anchors.fill: parent
         anchors.margins: 14
-        spacing: 10
+        spacing: 4
 
         Text {
             text: "清屏"

@@ -12,8 +12,13 @@
 - 组成：**后端一个文件** `main.py`（PySide6 + QML 桥接、手写笔迹存储与烘焙）+ **前端** `qml/`。
 - 能力：课程表灵动条（`LessonsDisplay.qml`）、全屏手写板（特殊模式：白板/黑板、笔/橡皮/选择/直线/形状/坐标系、多页、文件管理）。
 - 版本：`cwplugin.json.version` 与 `pyproject.toml [project].version` **两处必须一致**。
-- 当前基线：`v1.1.0-alpha`（提交 `93a6620`）之后还有大量未提交改动 →
-  `docs/CHANGELOG-unreleased.md` 记录了这批改动的可读摘要。
+- 当前基线：tag `v1.1.0-alpha`（提交 `93a6620`）；其后的大批改动**已提交**为 `f7ffc6d`（2026-10-28，尚未打 tag）。
+  在 `f7ffc6d` 之上又有一批**尚未提交**的工作区改动（坐标系视框映射 / 坐标 2 位小数落盘 / UI 尺寸与缩放解耦 /
+  文件管理页布局等）——`git status` 应为：已改 `main.py`、`AGENTS.md`、`TASK_STATE.md`、
+  `qml/specialmode/{EraserMenu,PageListMenu}.qml`、`qml/specialmode/datamanager/DataManagerPanel.qml`、
+  `.github/agents/memory/{index,design-system}.md`，另有**未跟踪**的 `__init__.py`（`from .main import Plugin`，
+  插件包必需，未入库）；改动由仓库作者自行提交，Agent 不执行 commit/push/tag。
+  `docs/CHANGELOG-unreleased.md` 是「`v1.1.0-alpha` → 现在」全部未发布改动的可读摘要。
 
 ## 2. 目录职责
 
@@ -28,9 +33,10 @@
 | `previews/`、`icon.png` | 预览图与插件图标 | — |
 | `_research_extract/` | 反编译参考（主程序内部实现） | **只读参考，不要打包/引用** |
 | `_dev/` | 本机开发工具：六套 offscreen 测试、像素渲染比对、桩模块 | **gitignored，不进安装副本** |
-| `libs/`、`RinUI/`、`.venv*/`、`__pycache__/`、`log/` | 依赖/运行产物 | gitignored |
+| `libs/perfect_freehand/` | vendored 依赖（手写笔迹仿真）：`main.py` 里 `sys.path.insert(..., "libs")` + `from perfect_freehand import get_stroke`，失败回退 `_HAS_PERFECT_FREEHAND=False` | **已入库跟踪**（`f7ffc6d` 加入），许可见同目录 `PERFECT_FREEHAND_LICENSE.txt` |
+| `RinUI/`、`.venv*/`、`__pycache__/`、`log/` | 依赖/运行产物 | gitignored |
 | `.github/agents/` | Agent 说明与长期记忆 | 见 §8 |
-| `docs/` | 使用文档与未发布改动日志 | — |
+| `docs/` | 未发布改动日志 | **gitignored**（本地留痕，不入库；`.gitignore` 显式忽略 `docs/CHANGELOG-unreleased.md`） |
 
 ## 3. 环境与命令
 
@@ -38,6 +44,14 @@
   （仓库里的 `.venv-1` / `.venv-2` 只用于局部试验，别当默认解释器）。
 - **安装副本**（在真实主程序里验证用）：`C:\Users\32852\Desktop\文件\Class-Widgets-2\plugins\com.yersmagit.lessonsdisplayer\`。
 - 语法检查：`python -m py_compile main.py`
+- **先切 UTF-8 控制台**（Python 输出 UTF-8，而控制台默认 936 → 中文 PASS/FAILED 行会乱码，
+  看起来像测试挂了）：
+
+  ```powershell
+  [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+  $env:PYTHONIOENCODING = 'utf-8'
+  ```
+
 - **六套离屏回归**（全部在 offscreen 下跑，缺一不可）：
 
   ```powershell
@@ -49,7 +63,8 @@
   ```
 
 - **像素一致性**（形状/立体/坐标系小图标 QML↔Python）：`& $py -u _dev\_render_menu.py`
-  → 关注「差异采样点: 0」与墨量比 ≈1.000。
+  → 关注「差异采样点: 0」与墨量比 ≈1.000。已知基线例外：`circle ≈1.049`、`hyp ≈1.011`
+  （`shapes` 那批的曲线近似），其余 1.000~1.005；出现新的大偏差（如 1.11）才是"少画/多画"。
 - **截图**：设环境变量 `DM_SHOT=1` 跑 `_dev\_verify_shapes_qml.py`，会输出
   `_dev\_dev_out\datamanager.png` / `datamanager_panel.png`（2× 的 `datamanager_zoom.png`）。
 - 没有本地构建命令：`.cwplugin` / `.zip` 由 CI（`.github/workflows/release.yml`）在打 tag 时生成。
@@ -78,9 +93,35 @@
   `style` 为空 = 手绘，`"arrow"` = 线型，`fig:<kind>` = 图形，`grp` 把多笔图形成组（整组选中/一次撤销）。
 - 多页与会话：`_pages = [{file, strokes, undo}]`、`_page_index`、注册表 `pages.json`；
   每页一个 `canvas_*.db`；**历史页面 = `data` 目录里未打开的 `canvas_*.db`**。
+- **落盘精度**：`points` 的 x,y 存库时统一取 **2 位小数**（`_q_pts()` / `_q2()`，在 `add_stroke` /
+  `insert_stroke` / `update_stroke` 三处，`pat` 同规则），pressure 不动；**只在落盘层取整，内存几何保持原精度**
+  （否则抛物线的 1e-9 级不变量断言会被打挂）→ 重启/切页读回与内存相差 ≤ 0.005 px，属预期。
 - 缩略图：`image://whiteboard/thumb?page=N&v=<thumbVersion>&o=<tick>`（已打开页）、
   `image://whiteboard/hist?file=<name>&v=<mtime>&o=<tick>`（历史页）。
-- 危险区域：`_tf_*`（两阶段图形/坐标系）、`_ax_*`（坐标系）、`_pf_*`（多边形随心画）——改前先读相关测试。
+  `v=` / `o=` **仅用于改 URL 让 Qt 图片缓存重新请求**（provider 会忽略它们）→ 新写 `Image.source` 必须带 `&v=`。
+- **坐标系（视框 / viewBox 模型，改坐标相关代码前必读）**：
+  - **画布坐标**（= SQLite 里的 `points`）= **首次落笔那台屏幕的逻辑像素**，永久不变；
+    **视口坐标** = 当前屏幕/窗口逻辑像素（= QML 的 `mouse.x/y`）。
+  - `meta` 只存**内容框** `frame_x/y/w/h`（创建时屏幕逻辑尺寸、原点 0,0，**永不修改**）+ 视口快照 `view_*`（仅记录）；
+    **不存 `device_pixel_ratio`**，缩放 `viewScale = 屏幕宽 / 视口宽` 现算。
+  - 映射：`视口 = (画布 − 视口原点) × viewScale`；分辨率变化时视口 = 内容框补足到新宽高比 + 原点前移 `Δ/2`
+    （内容居中、不截断）。推导入口 `_fit_view()`，**每次都从 `frame_*` 现算，不得在旧视口上累加**（会越切越小）。
+  - **新增任何 `@Slot`/`@Property` 涉及几何量时**：入参在槽首 `x, y = self._v2c(x, y)`（宽高 `/ self._view_s`），
+    出参用 `self._c2v/_c2v_pairs/_c2v_flat`；内部互相调用必须走「画布实现」（`_begin_focus_probe` /
+    `_drag_focus_probe` / `_apply_transform`），**不要调回槽**（会二次转换）。
+  - 绘制：烘焙图 `_image` 尺寸 = `_canvas_size`（视口），所有 `QPainter(self._image/_plain/预览图)`
+    都要 `self._apply_view(painter)`；**图层预烘焙 `_stroke_layer` 不能加变换**（保留整数 blit 优化）。
+  - **UI 尺寸必须按屏幕像素恒定**：提示胶囊锚点距离（`_PF_HINT_R = 28`）、端点手柄命中半径（16）
+    这类"界面尺寸"写的是**屏幕 px** → 参与画布坐标计算时必须 `/ self._view_s`
+    （范例：`_pf_bisect_pt(..., _PF_HINT_R / _view_s)`、`hitLineEndpoint` 里的 `r = 16.0 / _view_s`）。
+- 危险区域——改前先读相关测试：
+  - **两阶段图形 / 坐标系**：`_tf_*`（3744-3748）、`_ax_*`（3768-3771）是 `WhiteboardBackend` 的**状态字段**，
+    **不是方法前缀**（`def _tf_` / `def _ax_` 全文件 0 个，按前缀搜会一无所获）。
+    真正入口：`beginFocusProbe` / `dragFocusProbe` / `endFocusProbe` / `finishFocusStage` / `_commit_focus_stage` /
+    `_refresh_solid_stage`，坐标系 `_end_axes` / `_move_axes` / `_commit_axes` / `_refresh_axes_stage`；
+    两者都由 `beginLine` / `moveLine` / `endLine` 分派。
+  - **多边形随心画**：`_pf_begin` / `_refresh_polfree` / `_pf_end_drag` / `_pf_commit_closure` / `_pf_finish`
+    （+ 模块级 `_pf_*` 几何辅助）。
 
 ## 6. 测试约定
 

@@ -41,7 +41,7 @@ Item {
     readonly property int cardRadius: 16
     readonly property int cardPadX: 32             // 卡片内左右内边距（4 列刚好 = 152 宽格子）
     readonly property int cardPadTop: 26           // 卡片内顶边到第一个小节标题
-    readonly property int cardPadBottom: 24
+    readonly property int cardPadBottom: 0
     readonly property int blockGap: 10             // 内容列统一间距
     readonly property int sectionGap: 10           // 两段之间额外间距（10 + 10 + 10 = 30）
     readonly property int sectionTitleH: 20

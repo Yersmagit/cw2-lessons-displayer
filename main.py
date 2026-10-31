@@ -584,10 +584,40 @@ def _pat_json(pat):
     if not pat:
         return ""
     try:
-        vals = [float(v) for v in pat]
+        vals = [_q2(v) for v in pat]
     except Exception:
         return ""
     return json.dumps(vals[:4]) if len(vals) >= 4 else ""
+
+
+# ---------- 坐标精度 ----------
+# 点列存库时坐标统一取 **2 位小数**（0.01 逻辑像素，远低于任何输入设备的实际分辨率：
+# 鼠标/触控的量化步长约 1 物理像素 = 0.8~1 逻辑像素）。去掉的是浮点噪声（DPR 除法与
+# 三角/几何运算产生的一长串小数），实测可把 points 的 JSON 文本缩小 37%~59%。
+_POINT_DECIMALS = 2
+
+
+def _q2(v):
+    """坐标取 2 位小数；-0.0 归一为 0.0（避免存出 "-0.0"）。"""
+    try:
+        r = round(float(v), _POINT_DECIMALS)
+    except Exception:
+        return 0.0
+    return 0.0 if r == 0 else r
+
+
+def _q_pts(points):
+    """点列 [x,y] / [x,y,pressure] 的 **x,y 取 2 位小数**（pressure 等高精度分量不动）。"""
+    out = []
+    for p in points or []:
+        try:
+            q = [_q2(p[0]), _q2(p[1])]
+            if len(p) > 2:
+                q.extend(float(v) for v in p[2:])
+        except Exception:
+            continue
+        out.append(q)
+    return out
 
 
 def _snap_stroke(s):
@@ -2413,12 +2443,14 @@ def _pf_edge_snap(prev, start, mx, my):
     return [start[0] + nx * ml, start[1] + ny * ml], best[1]
 
 
-def _pf_bisect_pt(prev, start, end):
-    """夹角**内角的角平分线**上、距顶点（start）**固定 28px** 的一点——内角提示胶囊的锚点。
+def _pf_bisect_pt(prev, start, end, dist=_PF_HINT_R):
+    """夹角**内角的角平分线**上、距顶点（start）指定距离的一点——内角提示胶囊的锚点。
 
     用户要求：角度文字提示框的**几何中心永远距角顶点 28px**、且在角平分线上 →
     这里给出这个点，QML 侧把胶囊**以该点为中心**摆放（居中于平分线、在内角一侧），
     于是胶囊中心与顶点的距离恒为 28px（不随角度/边长变化）。
+    `dist` 是**画布单位**的距离：要“屏幕 28px 恒定”则由调用方传 `_PF_HINT_R / viewScale`
+    （视框缩放 ≠1 时画布单位比屏幕像素大）。
     """
     v1x, v1y = float(prev[0]) - float(start[0]), float(prev[1]) - float(start[1])
     v2x, v2y = float(end[0]) - float(start[0]), float(end[1]) - float(start[1])
@@ -2431,8 +2463,9 @@ def _pf_bisect_pt(prev, start, end):
         # 两边几乎反向（夹角 ≈ 180°）→ 平分线退化，改用新边的法向兜底
         bx, by = -v2y / l2, v2x / l2
         bl = 1.0
-    return [float(start[0]) + bx / bl * _PF_HINT_R,
-            float(start[1]) + by / bl * _PF_HINT_R]
+    dist = float(dist)
+    return [float(start[0]) + bx / bl * dist,
+            float(start[1]) + by / bl * dist]
 
 
 def _pf_interior_angle(prev, start, end):
@@ -3438,6 +3471,77 @@ class StrokeStore:
         except Exception:
             return default
 
+    def get_frame(self):
+        """读**视框** (x, y, w, h)；老库（无 frame_* 键）返回 None。
+
+        视框 = 画布坐标里"当前屏幕正在显示"的那块矩形，宽高比恒等于屏幕宽高比；
+        缩放 = 屏幕宽 / 视框宽（即旧的 DPR 语义，现在现算不落盘）。
+        """
+        if self._conn is None:
+            return None
+        try:
+            vals = [self._meta_value(k, "") for k in
+                    ("frame_x", "frame_y", "frame_w", "frame_h")]
+            if any(v in ("", None) for v in vals):
+                return None
+            x, y, w, h = [float(v) for v in vals]
+            if w <= 0 or h <= 0:
+                return None
+            return (x, y, w, h)
+        except Exception:
+            return None
+
+    def legacy_frame(self):
+        """老库的等效视框 = 创建时的屏幕逻辑尺寸（当时的点列就是这个坐标系的像素）。
+
+        旧版本写的是 screen_width/screen_height/device_pixel_ratio，点列已经是**逻辑像素**
+        （DPR 在输入时就被 Qt 除掉了）→ 直接以 screen_* 当视框，无需换算，天然兼容。
+        """
+        try:
+            w = float(self._meta_value("screen_width", "0") or 0)
+            h = float(self._meta_value("screen_height", "0") or 0)
+            if w > 1 and h > 1:
+                return (0.0, 0.0, w, h)
+        except Exception:
+            pass
+        return None
+
+    def set_frame(self, x, y, w, h):
+        """写**内容视框**（创建时那台屏幕的逻辑矩形；老库首次打开时也用它补写）。"""
+        if self._conn is None:
+            return
+        try:
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", [
+                    ("frame_x", str(float(x))),
+                    ("frame_y", str(float(y))),
+                    ("frame_w", str(float(w))),
+                    ("frame_h", str(float(h))),
+                ])
+            self._conn.commit()
+        except Exception as e:
+            plugin_logger.debug(f"写视框失败: {e}")
+
+    def set_view(self, x, y, w, h):
+        """写**当前视口**快照（分辨率自适应后的显示区域；仅供记录/排查，不参与计算）。
+
+        真正用于映射的只有 `frame_*`（不可变内容框）：视口每次都从它 + 当前屏幕现算，
+        所以来回换分辨率不会累积（内容不会被越缩越小）。
+        """
+        if self._conn is None:
+            return
+        try:
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", [
+                    ("view_x", str(float(x))),
+                    ("view_y", str(float(y))),
+                    ("view_w", str(float(w))),
+                    ("view_h", str(float(h))),
+                ])
+            self._conn.commit()
+        except Exception as e:
+            plugin_logger.debug(f"写视口失败: {e}")
+
     def open_session(self, name):
         """打开指定会话文件（basename）作为当前会话；不存在返回 False。"""
         self.close()
@@ -3473,11 +3577,16 @@ class StrokeStore:
         return self.open_session(names[-1])
 
     def new_session(self, screen_w, screen_h, dpr, mode,
-                    prev_file=None, created_by="initial"):
+                    prev_file=None, created_by="initial", frame=None):
         """结束当前会话（若有），新建空白会话文件并建表 + 写元数据。
 
         prev_file=旧会话文件名、created_by="clear" 时，本文件记录"由清屏生成、
         清屏前数据在 prev_file"——撤销清屏时据此切回旧文件（之后笔迹写回旧文件）。
+
+        frame=(x, y, w, h) 为**视框**（画布坐标里当前屏幕正在显示的矩形，宽高比 =
+        屏幕宽高比）；新页继承当前页的视框 → 所有页共用一个坐标系（见
+        `WhiteboardBackend._fit_view`）。**不再写 device_pixel_ratio**：缩放由
+        "屏幕宽 / 视框宽" 现算，屏幕变了自动重算。
         """
         self.close()
         self._ensure_dir()
@@ -3500,13 +3609,21 @@ class StrokeStore:
         self._conn.executemany("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", [
             ("screen_width", str(int(screen_w or 0))),
             ("screen_height", str(int(screen_h or 0))),
-            ("device_pixel_ratio", str(float(dpr or 1.0))),
             ("mode", str(mode or "")),
             ("created_at", now),
             ("prev_file", str(prev_file or "")),
             ("created_by", str(created_by or "initial")),
         ])
         self._conn.commit()
+        if frame:
+            try:
+                fx, fy, fw, fh = [float(v) for v in frame]
+                self.set_frame(fx, fy, fw, fh)
+            except Exception:
+                pass
+        elif screen_w and screen_h:
+            # 首次新建：视框 = 当前屏幕（原点 0,0），宽高比即屏幕宽高比
+            self.set_frame(0.0, 0.0, float(int(screen_w)), float(int(screen_h)))
         plugin_logger.info(f"新建笔迹会话文件: {path} (created_by={created_by}, prev={prev_file})")
         return path
 
@@ -3524,7 +3641,7 @@ class StrokeStore:
                 "INSERT INTO strokes(op,color,width,points,style,pat,grp,created_at) "
                 "VALUES(?,?,?,?,?,?,?,?)",
                 (op, color or "", float(width or 0.0),
-                 json.dumps([[float(v) for v in p] for p in points]), style or "",
+                 json.dumps(_q_pts(points)), style or "",
                  _pat_json(pat), grp or "",
                  time.strftime("%Y-%m-%d %H:%M:%S")))
             self._conn.commit()
@@ -3553,7 +3670,7 @@ class StrokeStore:
                 "INSERT INTO strokes(id,op,color,width,points,style,pat,grp,created_at) "
                 "VALUES(?,?,?,?,?,?,?,?,?)",
                 (int(stroke_id), op or "", color or "", float(width or 0.0),
-                 json.dumps([[float(v) for v in p] for p in points]), style or "",
+                 json.dumps(_q_pts(points)), style or "",
                  _pat_json(pat), grp or "",
                  time.strftime("%Y-%m-%d %H:%M:%S")))
             self._conn.commit()
@@ -3587,7 +3704,7 @@ class StrokeStore:
         if self._conn is None:
             return
         try:
-            pts = json.dumps([[float(v) for v in p] for p in points])
+            pts = json.dumps(_q_pts(points))
             sets = ["op=?", "color=?", "width=?", "points=?"]
             args = [op, color or "", float(width or 0.0), pts]
             if style is not None:
@@ -3703,6 +3820,7 @@ class WhiteboardBackend(QObject):
     historyChanged = Signal()        # 历史页面（data 目录里未打开的页）列表变化（数据管理页监听）
     shapeFinished = Signal()         # 形状线一次绘制结束（接线处据此把工具回退到选择/笔/橡皮）
     solidProjChanged = Signal()      # 立体图形测画方式（正等测/斜二测）变化
+    viewChanged = Signal()           # 视框/缩放变化（屏幕分辨率自适应后）
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -3722,6 +3840,13 @@ class WhiteboardBackend(QObject):
         self._store = None
         self._screen = (0, 0, 1.0, "")   # (宽, 高, dpr, mode) 逻辑像素
         self._canvas_size = (1, 1)
+        # 视框（画布坐标里当前屏幕正在显示的矩形）+ 缩放（屏幕宽 / 视框宽）；
+        # `_frame0` = **内容框**（创建时那台屏幕的逻辑矩形，永不变）
+        # `_frame`  = **当前视口**（由内容框 + 当前屏幕现算，可能比内容框大）
+        # 缺省 (0,0,1,1)/1.0 = 恒等映射（未接屏幕或测试环境行为不变）
+        self._frame0 = (0.0, 0.0, 1.0, 1.0)
+        self._frame = (0.0, 0.0, 1.0, 1.0)
+        self._view_s = 1.0
         self._image_version = 0
         self._light = True
         # 选择状态
@@ -3817,6 +3942,10 @@ class WhiteboardBackend(QObject):
     def set_screen_info(self, w, h, dpr, mode):
         self._screen = (w, h, dpr or 1.0, mode)
         self._light = (mode == "whiteboard")   # 白板=浅色
+        # 屏幕尺寸也参与视框自适应（接线顺序是 set_canvas_size → set_screen_info）
+        if w and h:
+            self._canvas_size = (max(1, int(w)), max(1, int(h)))
+            self._fit_view()
 
     def set_pen_speed_map(self, enabled, sensitivity="standard"):
         """设置无压感设备的"速度→粗细"映射参数（Plugin 在接线/设置变化时调用）。
@@ -3829,8 +3958,158 @@ class WhiteboardBackend(QObject):
             self._speed_map_sens = sensitivity
 
     def set_canvas_size(self, w, h):
-        """设置画布逻辑尺寸（屏幕宽高），由 Plugin 接线时传入。"""
+        """设置画布视口尺寸（屏幕逻辑宽高），由 Plugin 接线时传入。"""
         self._canvas_size = (max(1, int(w)), max(1, int(h)))
+        self._fit_view()
+
+    # ---------- 视框映射（画布坐标 ↔ 屏幕视口坐标）----------
+    # 画布坐标 = 笔迹点列存储的坐标系（**首次落笔那台屏幕的逻辑像素**，之后永不变）。
+    # 两级矩形（类似 SVG 的 viewBox + 内容框）：
+    #   · **内容框** frame_*：创建时那台屏幕的逻辑尺寸、原点 0,0，**永不修改**（存 meta）；
+    #   · **视口**  _frame ：当前屏幕正在显示的那块画布矩形，宽高比 == 当前屏幕宽高比，
+    #     由内容框 + 当前屏幕**现算**（_fit_view），不落盘参与计算（只写 view_* 快照）。
+    # 缩放 s = 屏幕宽 / 视口宽（= 旧 DPR 的语义，现在现算）：
+    #   · 画布 -> 视口：vx = (cx - 视口原点x) * s
+    #   · 视口 -> 画布：cx = 视口原点x + vx / s
+    # 分辨率变了就"补足短边、原点前移一半" → 旧笔迹居中且不被截断；每轮都从内容框重新
+    # 推导，所以来回换分辨率不会累积（见 _fit_view）。
+
+    def _load_frame(self):
+        """取**内容框**：meta 里有就用；老库退化为创建时屏幕尺寸并补写（迁移）。"""
+        if self._store is None or not self._store.has_session:
+            return None
+        fr = self._store.get_frame()
+        if fr is not None:
+            return fr
+        fr = self._store.legacy_frame()
+        if fr is not None:
+            self._store.set_frame(*fr)    # 老库迁移：补写 frame_* 键
+        return fr
+
+    def _fit_view(self):
+        """按当前屏幕与**内容框**算缩放/原点（分辨率变化时自动适应，且不累积）。
+
+        分辨率变化的两条规则（内容始终居中、不被截断；与用户要求一致）：
+        · 新屏**更宽**（x 相对变多）→ 高 y 不变，宽 x 多出 Δx = (x2/y2*y1 - x1)/2
+          （x2/y2 = 内容框宽高比，y1/x1 = 新屏高/宽），视口宽 = 内容框宽 + 2Δx，
+          原点 x = 内容框原点 − Δx；
+        · 新屏**更高**同理 → 宽 x 不变，高补足，原点 y 前移 Δy。
+        宽高比没变 → 视口 = 内容框，只改缩放。
+        **关键**：每次都从不可变的 `frame_*` 推导（不是在上次的视口上再加）——
+        否则来回换分辨率会逐次累积，内容越缩越小。
+        """
+        sw, sh = float(self._canvas_size[0]), float(self._canvas_size[1])
+        fr = self._load_frame()
+        if sw <= 1 or sh <= 1 or fr is None:
+            self._frame0 = (0.0, 0.0, max(1.0, sw), max(1.0, sh))
+            self._frame = self._frame0
+            self._view_s = 1.0
+            self.viewChanged.emit()
+            return
+        fx, fy, fw, fh = [float(v) for v in fr]
+        self._frame0 = (fx, fy, fw, fh)
+        # 等比缩放取两轴较小者 = 内容完整可见；视口比内容框多出的部分两侧均分
+        s = min(sw / fw, sh / fh)
+        if s <= 0:
+            s = 1.0
+        view_w, view_h = sw / s, sh / s
+        ox = fx + (fw - view_w) / 2.0
+        oy = fy + (fh - view_h) / 2.0
+        self._frame = (ox, oy, view_w, view_h)
+        self._view_s = s
+        if abs(view_w - fw) > 1e-6 or abs(view_h - fh) > 1e-6:
+            # 只记录显示区域快照（不参与计算；frame_* 永远是内容框）
+            try:
+                self._store.set_view(ox, oy, view_w, view_h)
+            except Exception:
+                pass
+            plugin_logger.info(
+                "屏幕分辨率变化 → 视口自适应: 内容框 %.1fx%.1f 视口 (%.1f,%.1f) "
+                "%.1fx%.1f 缩放=%.4f" % (fw, fh, ox, oy, view_w, view_h, s))
+        self.viewChanged.emit()
+
+    def _apply_view(self, painter):
+        """把 painter 从"画布坐标"切到"视口坐标"（烘焙图 = 屏幕逻辑尺寸）。"""
+        fx, fy = self._frame[0], self._frame[1]
+        s = self._view_s
+        if s == 1.0 and fx == 0.0 and fy == 0.0:
+            return painter                      # 常见情形：恒等，零开销
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)  # 缩放时图层 blit 平滑重采样
+        painter.scale(s, s)
+        painter.translate(-fx, -fy)
+        return painter
+
+    def _v2c(self, x, y):
+        """视口坐标（QML 鼠标）→ 画布坐标。
+
+        **不取整**：内存几何保持原精度（抛物线/椭圆等有 1e-9 级不变量断言）；
+        存库时才取 2 位小数（见 `_q_pts` / `StrokeStore.add_stroke`）。
+        """
+        s = self._view_s
+        if s == 1.0 and self._frame[0] == 0.0 and self._frame[1] == 0.0:
+            return float(x), float(y)
+        return (self._frame[0] + float(x) / s, self._frame[1] + float(y) / s)
+
+    def _c2v(self, x, y):
+        """画布坐标 → 视口坐标（QML 绘制/定位用）。"""
+        s = self._view_s
+        if s == 1.0 and self._frame[0] == 0.0 and self._frame[1] == 0.0:
+            return float(x), float(y)
+        return ((float(x) - self._frame[0]) * s,
+                (float(y) - self._frame[1]) * s)
+
+    def _v2c_poly(self, points):
+        """圈选多边形 [[x,y], ...]：视口 → 画布。"""
+        return [list(self._v2c(p[0], p[1])) for p in (points or [])]
+
+    def _c2v_pairs(self, points):
+        """[[x,y], ...]：画布 → 视口（手柄列表等）。"""
+        return [list(self._c2v(p[0], p[1])) for p in (points or [])]
+
+    def _c2v_flat(self, flat):
+        """扁平段列表 [x0,y0,x1,y1, ...]：画布 → 视口（引导线等）。"""
+        out = []
+        vals = list(flat or [])
+        for i in range(0, len(vals) - 1, 2):
+            vx, vy = self._c2v(vals[i], vals[i + 1])
+            out.append(vx)
+            out.append(vy)
+        return out
+
+    @Property(float, notify=viewChanged)
+    def viewScale(self):
+        """画布 → 视口缩放（= 屏幕宽 / 视口宽；原来的 DPR 语义，现算不落盘）。"""
+        return float(self._view_s)
+
+    @Property(float, notify=viewChanged)
+    def viewOriginX(self):
+        """当前视口左上角在画布坐标里的 x（可为负 = 左侧留白，类似 SVG viewBox 起点）。"""
+        return float(self._frame[0])
+
+    @Property(float, notify=viewChanged)
+    def viewOriginY(self):
+        """视框左上角在画布坐标里的 y（可为负 = 上方留白）。"""
+        return float(self._frame[1])
+
+    @Property(float, notify=viewChanged)
+    def viewFrameWidth(self):
+        """**当前视口**宽（画布坐标单位）= 屏幕宽 / 缩放；能比内容框大（两侧留白）。"""
+        return float(self._frame[2])
+
+    @Property(float, notify=viewChanged)
+    def viewFrameHeight(self):
+        """**当前视口**高（画布坐标单位）= 屏幕高 / 缩放。"""
+        return float(self._frame[3])
+
+    @Property(float, notify=viewChanged)
+    def viewContentWidth(self):
+        """**内容框**宽（画布坐标单位）——创建时那台屏幕的宽，永不变；缩放/居中都以它为基准。"""
+        return float(self._frame0[2])
+
+    @Property(float, notify=viewChanged)
+    def viewContentHeight(self):
+        """**内容框**高（画布坐标单位）——创建时那台屏幕的高，永不变。"""
+        return float(self._frame0[3])
 
     def load_strokes(self, strokes):
         """载入既有笔迹并整幅重放渲染（进入特殊模式时恢复上次内容）。
@@ -3861,7 +4140,7 @@ class WhiteboardBackend(QObject):
                 else:
                     # 当前页文件缺失（异常）→ 重建空白会话
                     w, h, dpr, mode = self._screen
-                    self._store.new_session(w, h, dpr, mode)
+                    self._store.new_session(w, h, dpr, mode, frame=self._frame0)
                     self._pages[self._page_index]["file"] = self._store.current_file()
                     self._pages[self._page_index]["strokes"] = []
                     self._save_page_registry()
@@ -3873,6 +4152,7 @@ class WhiteboardBackend(QObject):
             self._pages = [{"file": self._store.current_file() if self._store else None,
                             "strokes": self._strokes, "undo": self._undo_stack}]
             self._page_index = 0
+        self._fit_view()   # 当前页可能换了坐标系（分辨率变过）→ 重算视框/缩放
         self._sel_grid = None   # 载入新笔迹 → 圈选索引失效
         self._plain = None      # 画布无选中版失效（下面 _render_all 会重建）
         self._ensure_image()
@@ -3934,6 +4214,7 @@ class WhiteboardBackend(QObject):
             p = QPainter(img)
             p.setRenderHint(QPainter.Antialiasing)
             p.scale(tw / cw, max_h / ch)
+            self._apply_view(p)
             # 缩略图上笔迹至少 ~2px 可见：4K 画布的细笔迹（4px）缩小 ~15 倍后不足 1px，
             # 几乎不可见；允许适度失真把笔宽抬到缩略图上可辨的粗细。
             min_w = max(2.0 / (tw / cw), 1.0)
@@ -4001,6 +4282,39 @@ class WhiteboardBackend(QObject):
         if st is None:
             st = self._load_page_strokes_readonly(page.get("file"))
         return st
+
+    def _read_page_frame(self, name):
+        """只读读任意会话文件的视框（历史页导入时继承来源页坐标系）；取不到返回 None。
+
+        与 `_load_page_strokes_readonly` 同理：**不能**走 store.open_session。
+        """
+        if not name or not self._store:
+            return None
+        path = os.path.join(self._store.data_dir, name)
+        if not os.path.exists(path):
+            return None
+        conn = None
+        try:
+            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            meta = dict(conn.execute("SELECT key,value FROM meta").fetchall())
+            if all(k in meta for k in ("frame_x", "frame_y", "frame_w", "frame_h")):
+                fx, fy, fw, fh = [float(meta[k]) for k in
+                                  ("frame_x", "frame_y", "frame_w", "frame_h")]
+                if fw > 0 and fh > 0:
+                    return (fx, fy, fw, fh)
+            sw = float(meta.get("screen_width", 0) or 0)
+            sh = float(meta.get("screen_height", 0) or 0)
+            if sw > 1 and sh > 1:      # 老库：点列就是当年屏幕的逻辑像素
+                return (0.0, 0.0, sw, sh)
+        except Exception as e:
+            plugin_logger.debug(f"只读读视框失败: {name}: {e}")
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        return None
 
     def _load_page_strokes_readonly(self, name):
         """只读打开指定会话文件并读出全部笔迹（非当前页缩略图用）。
@@ -4083,6 +4397,7 @@ class WhiteboardBackend(QObject):
             if self._strokes:
                 p = QPainter(self._image)
                 p.setRenderHint(QPainter.Antialiasing)
+                self._apply_view(p)
                 for s in self._strokes:
                     _draw_stroke(p, s, self._light)
                 p.end()
@@ -4099,6 +4414,7 @@ class WhiteboardBackend(QObject):
         self._image = self._base.copy()
         p = QPainter(self._image)
         p.setRenderHint(QPainter.Antialiasing)
+        self._apply_view(p)
         # 等长/平行命中的"这两边"先铺蓝色宽底，随后墨色盖回中间 → 只留两侧各 2px 蓝
         self._draw_pf_highlight(p)
         _draw_stroke(p, self._active, self._light)
@@ -4357,6 +4673,7 @@ class WhiteboardBackend(QObject):
         img.fill(Qt.transparent)
         p = QPainter(img)
         p.setRenderHint(QPainter.Antialiasing)
+        self._apply_view(p)
         for s in self._strokes:
             if s.get("id") in sel and s.get("op") == "pen":
                 continue
@@ -4382,6 +4699,7 @@ class WhiteboardBackend(QObject):
         self._plain.fill(Qt.transparent)
         p = QPainter(self._plain)
         p.setRenderHint(QPainter.Antialiasing)
+        self._apply_view(p)
         for s in self._strokes:
             self._blit_stroke(p, s, False)
         p.end()
@@ -4392,6 +4710,7 @@ class WhiteboardBackend(QObject):
         sel = set(self._selection or [])
         p = QPainter(self._image)
         p.setRenderHint(QPainter.Antialiasing)
+        self._apply_view(p)
         for s in self._strokes:
             if s.get("id") in sel and s.get("op") == "pen":
                 self._blit_stroke(p, s, True)
@@ -4413,6 +4732,7 @@ class WhiteboardBackend(QObject):
         sel = set(self._selection or [])
         p = QPainter(self._image)
         p.setRenderHint(QPainter.Antialiasing)
+        self._apply_view(p)
         for s in self._strokes:
             if s.get("id") in sel and s.get("op") == "pen":
                 self._blit_stroke(p, s, True)
@@ -4446,6 +4766,7 @@ class WhiteboardBackend(QObject):
         p = QPainter(img)
         p.setRenderHint(QPainter.Antialiasing)
         p.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        self._apply_view(p)
         if sx == 1.0 and sy == 1.0:
             # 纯平移：取整偏移 → 位图整数像素直拷，笔迹之间相对关系严格保持。
             # 取整规则必须与提交时的 _shift_stroke_layers 完全一致（round(d - 残差)），
@@ -4521,6 +4842,7 @@ class WhiteboardBackend(QObject):
         笔点记 [x,y,pressure]，pressure 由移动速度实时得出（慢→粗、快→细）。
         """
         is_pen = (op == 0)
+        x, y = self._v2c(x, y)   # QML 给的是屏幕视口坐标 → 换成画布坐标
         # 起点粗细由落笔后前 N 段平均速度决定（静止→粗、正常→适中、高速→细）：起点
         # 压力占位 0.5，第一个 move 时更新为起始平均速度对应的压力 → 起点圆头与起始段
         # 连续（无突兀大圆）。
@@ -4543,7 +4865,7 @@ class WhiteboardBackend(QObject):
     def moveStroke(self, x, y):
         if not self._active:
             return
-        cur = (float(x), float(y))
+        cur = self._v2c(x, y)   # 视口 → 画布（去重阈值也在画布单位下比较）
         if abs(cur[0] - self._last_pt[0]) < 0.5 and abs(cur[1] - self._last_pt[1]) < 0.5:
             return
         prev = self._last_pt
@@ -4555,6 +4877,7 @@ class WhiteboardBackend(QObject):
                 p = QPainter(self._image)
                 p.setRenderHint(QPainter.Antialiasing)
                 p.setCompositionMode(QPainter.CompositionMode_Clear)
+                self._apply_view(p)
                 p.setBrush(Qt.NoBrush)
                 p.setPen(QPen(QColor(Qt.transparent),
                               float(self._active.get("width", 32.0)),
@@ -4654,11 +4977,13 @@ class WhiteboardBackend(QObject):
         self._image.fill(Qt.transparent)
         if self._store:
             w, h, dpr, mode = self._screen
-            self._store.new_session(w, h, dpr, mode, prev_file=prev, created_by="clear")
+            self._store.new_session(w, h, dpr, mode, prev_file=prev, created_by="clear",
+                                    frame=self._frame0)
             created = self._store.current_file()
             self._push_undo({"type": "clear", "prev_file": prev, "created_file": created})
             # 当前页映射到新的空白会话文件（翻页/重启后仍指向正确文件）
             self._sync_current_page_file()
+            self._fit_view()   # 清屏新建了会话文件 → 按它的视框重算缩放
         self._bump()
         self.selectionChanged.emit()
         self._bump_thumbs()   # 清屏 → 页面缩略图刷新
@@ -4738,15 +5063,16 @@ class WhiteboardBackend(QObject):
         · 椭圆：起点是椭圆中心、终点是一个焦点（另一焦点镜像得到），前两点是两焦点，
           且松手后**不结束**（进入第二阶段拖焦点手柄定 2a，见 endEllipseProbe）。
         """
+        x, y = self._v2c(x, y)   # 视口 → 画布
         if self._tf_foci is not None:
             # 第二阶段：在画布**任意位置**按下 = 开始拖“自由探针”（不是在焦点手柄上）。
             # 效果与拖焦点手柄相同（椭圆定 2a / 双曲线定渐近线），松手才提交（见 endLine）。
-            self.beginFocusProbe(-1, x, y)
+            self._begin_focus_probe(-1, x, y)
             return
         if self._pf_pts is not None:
             # 多边形随心画的多步流程中：在画布**任意位置**按下 = 从"离鼠标最近的那一端"
             # 接着画下一条边（松手才结束这条边，见 endLine → endFocusProbe）。
-            self.beginFocusProbe(-1, x, y)
+            self._begin_focus_probe(-1, x, y)
             return
         if (style not in _LINE_SHAPES and style not in _SHAPE_KINDS
                 and style not in _SOLID_MENU_KINDS
@@ -4814,17 +5140,18 @@ class WhiteboardBackend(QObject):
     @Slot(float, float)
     def moveLine(self, x, y):
         """拖动中：终点跟随鼠标（线型只改第二点；图形按辅助矩形重算轮廓）。"""
+        x, y = self._v2c(x, y)   # 视口 → 画布（下面内部实现都吃画布坐标）
         if self._tf_foci is not None and (self._tf_probe is not None
                                           or self._tf_kind in _AXIS_MENU_KINDS):
             # 第二阶段：自由探针（在画布上拖动，非手柄）→ 实时重算形状
             # ⚠️ 坐标系第二步**按下时刻意不写 `_tf_probe`**（见 beginFocusProbe：没拖过就不显示 z 轴），
             # 所以这里不能只看 `_tf_probe` —— 否则“在画板任意位置拖拽”会掉到下面的 `_move_axes`，
             # 变成把 xoy 两轴拖走（用户报的问题）；必须拖的是 z 轴。
-            self.dragFocusProbe(x, y)
+            self._drag_focus_probe(x, y)
             return
         if self._pf_drawing:
             # 多边形随心画：正在拖某条边（手柄或画布任意位置）→ 实时重算这条边
-            self.dragFocusProbe(x, y)
+            self._drag_focus_probe(x, y)
             return
         if not self._active or not _is_shape_stroke(self._active):
             return
@@ -5972,6 +6299,7 @@ class WhiteboardBackend(QObject):
                     self._image = base_img.copy()
                     _p = QPainter(self._image)
                     _p.setRenderHint(QPainter.Antialiasing)
+                    self._apply_view(_p)
                     for s in strokes:
                         _draw_stroke(_p, s, self._light)
                     _p.end()
@@ -6114,9 +6442,12 @@ class WhiteboardBackend(QObject):
                     self._pf_end = [float(ang_end[0]), float(ang_end[1])]
                     self._fig_snap_kind = ""
             # 夹角文字提示（平行/等长/闭合时**照样显示**）：文字 = 最终几何的内角，
-            # 锚点 = 角平分线上距顶点 28px 处（QML 把胶囊以该点为中心摆放）
+            # 锚点 = 角平分线上距顶点 28px 处（QML 把胶囊以该点为中心摆放）。
+            # 28px 是**屏幕**尺寸 → 换到画布单位要除以视框缩放（否则缩放≠1 时胶囊会跟着缩放）。
             self._pf_angle = _pf_interior_angle(pts[-2], pts[-1], self._pf_end)
-            self._pf_anchor = _pf_bisect_pt(pts[-2], pts[-1], self._pf_end)
+            _vs = self._view_s if self._view_s > 0 else 1.0
+            self._pf_anchor = _pf_bisect_pt(pts[-2], pts[-1], self._pf_end,
+                                            _PF_HINT_R / _vs)
             self._pf_on_end = on_end
             verts = [[float(p[0]), float(p[1])] for p in pts] + [list(self._pf_end)]
             if self._active is not None:
@@ -6246,6 +6577,14 @@ class WhiteboardBackend(QObject):
 
     @Slot(int, float, float)
     def beginFocusProbe(self, idx, x, y):
+        """按下探针（QML 入口）：坐标是屏幕视口 → 换到画布后转内部实现。
+
+        形状工具按下时 `beginLine` 也会调内部实现（那里已经是画布坐标）。
+        """
+        cx, cy = self._v2c(x, y)
+        self._begin_focus_probe(idx, cx, cy)
+
+    def _begin_focus_probe(self, idx, x, y):
         """按下探针：idx = 0/1 表示按的是哪个焦点手柄（手柄跟鼠标走）；
         **idx = -1 表示在画布其它位置按下**（自由探针，两个手柄都停在焦点上）。
         多边形随心画（多步绘制）复用同一入口：idx = 0/1 = 链的首/尾端手柄，-1 = 任意位置。
@@ -6270,6 +6609,11 @@ class WhiteboardBackend(QObject):
 
     @Slot(float, float)
     def dragFocusProbe(self, x, y):
+        """拖探针中（QML 入口）：屏幕视口坐标 → 画布后转内部实现。"""
+        cx, cy = self._v2c(x, y)
+        self._drag_focus_probe(cx, cy)
+
+    def _drag_focus_probe(self, x, y):
         """拖探针中（手柄或画布任意位置）：探针跟鼠标 → 实时重算形状。
         椭圆：2a = |P−F1| + |P−F2|；双曲线：几何重心→鼠标 的连线就是一条渐近线。
         多边形随心画：顶点→鼠标 就是正在画的那条边（做内角吸附）。
@@ -6375,7 +6719,14 @@ class WhiteboardBackend(QObject):
 
     @Property('QVariantList', notify=imageVersionChanged)
     def focusProbeHandles(self):
-        """两阶段图形第二阶段的两个手柄 [[x,y],[x,y]]：
+        """第二阶段手柄位置 [[x,y],…]（**屏幕视口坐标**，QML 拿来直接定位）。
+
+        画布坐标的原始计算在 `_focus_probe_handles`（视框映射改造后只在这里换一次系）。
+        """
+        return self._c2v_pairs(self._focus_probe_handles())
+
+    def _focus_probe_handles(self):
+        """两阶段图形第二阶段的两个手柄 [[x,y],[x,y]]（**画布坐标**）：
 
         刚进入该阶段时 = 两个焦点（用户要求手柄出现在两焦点位置）；拖手柄时那个手柄跟鼠标走，
         在画布其它位置自由拖拽时两个手柄留在焦点上（不抢鼠标）。
@@ -6428,7 +6779,12 @@ class WhiteboardBackend(QObject):
 
     @Property('QVariantList', notify=imageVersionChanged)
     def focusProbePoint(self):
-        """当前探针位置 [x,y]（没在拖时为空）——提示胶囊在"拖手柄"时也用它定位。"""
+        """当前探针位置 [x,y]（**视口坐标**；没在拖时为空）——提示胶囊在拖手柄时也用它定位。"""
+        p = self._focus_probe_point()
+        return list(self._c2v(p[0], p[1])) if p else []
+
+    def _focus_probe_point(self):
+        """当前探针位置 [x,y]（**画布坐标**；没在拖时为空）。"""
         if self._pf_pts is not None:
             if not self._tf_probe_dragging or not self._pf_probe:
                 return []
@@ -6505,7 +6861,7 @@ class WhiteboardBackend(QObject):
 
         图形等边吸附 / 圆半径 = 1 段；椭圆 = 两焦点连线（1 段）或探针到两焦点（2 段）。
         """
-        return list(self._fig_snap_guide) if self._fig_snap_guide else []
+        return self._c2v_flat(self._fig_snap_guide)
 
     @Property(str, notify=imageVersionChanged)
     def figureSnapKind(self):
@@ -6574,10 +6930,10 @@ class WhiteboardBackend(QObject):
 
     @Property('QVariantList', notify=imageVersionChanged)
     def figureAngleAnchor(self):
-        """夹角提示胶囊的中心点 = 角平分线上距顶点 **固定 28px** 处（空 = 不显示）。"""
+        """夹角提示胶囊的中心点（视口坐标）= 角平分线上距顶点 **屏幕 28px** 处（空 = 不显示）。"""
         if self._pf_pts is None or not self._pf_drawing or not self._pf_anchor:
             return []
-        return [float(self._pf_anchor[0]), float(self._pf_anchor[1])]
+        return list(self._c2v(self._pf_anchor[0], self._pf_anchor[1]))
 
     @Property('QVariantList', notify=imageVersionChanged)
     def figureSnapHighlight(self):
@@ -6588,7 +6944,7 @@ class WhiteboardBackend(QObject):
         （改由 QML 引导线层画成"笔迹虚线 + 外侧 2px 蓝"，见 `figureSnapBoldGuide`/
         `figureGapColor`/`figureGapWidth`）。QML 不再单独画这层。
         """
-        return list(self._pf_hi) if self._pf_hi else []
+        return self._c2v_flat(self._pf_hi)
 
     @Property(bool, notify=imageVersionChanged)
     def figureSnapBoldGuide(self):
@@ -6609,11 +6965,15 @@ class WhiteboardBackend(QObject):
 
     @Property(float, notify=imageVersionChanged)
     def figureGapWidth(self):
-        """缺口连线的"笔迹粗细"（= 当前笔划宽度；无进行中的笔划时 0）。"""
+        """缺口连线的"笔迹粗细"（= 当前笔划宽度 × 缩放；无进行中的笔划时 0）。
+
+        笔宽存的是**画布单位**，而 QML 引导线画在屏幕上 → 乘缩放才是屏幕上的粗细。
+        """
         act = self._active
         if not act:
             return 0.0
-        return max(0.5, float(act.get("width", 4.0)))
+        s = self._view_s if self._view_s > 0 else 1.0
+        return max(0.5, float(act.get("width", 4.0))) * s
 
     @Property(str, notify=imageVersionChanged)
     def figureAlignKind(self):
@@ -6667,7 +7027,7 @@ class WhiteboardBackend(QObject):
     @Property('QVariantList', notify=imageVersionChanged)
     def scaleAspectGuide(self):
         """四角缩放时的"等比例缩放直线" [x0,y0,x1,y1]（QML 画蓝色 1px 虚线）；无则空。"""
-        return list(self._scale_aspect_guide or [])
+        return self._c2v_flat(self._scale_aspect_guide)
 
     @Property('QVariantMap', constant=True)
     def shapeAspects(self):
@@ -7270,13 +7630,13 @@ class WhiteboardBackend(QObject):
         """开始圈选：清除旧的已确认矩形/工具栏状态，记录多边形并实时计算被包裹笔划。"""
         self._sel_active = False
         self._sel_rect = None
-        self._sel_poly = [[float(p[0]), float(p[1])] for p in (points or [])]
+        self._sel_poly = self._v2c_poly(points)   # 视口 → 画布
         self._select_inside_polygon()
 
     @Slot('QVariantList')
     def updateSelection(self, points):
         """圈选过程中多边形变化：重算被包裹笔划。"""
-        self._sel_poly = [[float(p[0]), float(p[1])] for p in (points or [])]
+        self._sel_poly = self._v2c_poly(points)   # 视口 → 画布
         self._select_inside_polygon()
 
     @Slot()
@@ -7310,7 +7670,7 @@ class WhiteboardBackend(QObject):
         用户要求：单击几何体的某一边时，只要这个几何体没被橡皮分割，就应当选中整个几何体
         （而不是只选中这一边）。梯形/形状线等单笔图形没有 grp，行为不变。
         """
-        x, y = float(x), float(y)
+        x, y = self._v2c(x, y)   # 视口 → 画布
         hit = self._hit_stroke(x, y)
         if hit is not None:
             self._selection = self._expand_grp([hit])
@@ -7340,6 +7700,12 @@ class WhiteboardBackend(QObject):
 
     @Slot(float, float, float, float)
     def applyTransform(self, x1, y1, w1, h1):
+        """把选中笔划映射到目标矩形（QML 入口）：屏幕视口坐标 → 画布后转内部实现。"""
+        cx, cy = self._v2c(x1, y1)
+        s = self._view_s if self._view_s > 0 else 1.0
+        self._apply_transform(cx, cy, float(w1) / s, float(h1) / s)
+
+    def _apply_transform(self, x1, y1, w1, h1):
         """把选中笔划映射到目标矩形 (x1,y1,w1,h1)（平移或等比缩放）。
 
         拖拽中（beginModify..endModify 之间）：只记录相对基准矩形的变换并做"预览
@@ -7562,6 +7928,7 @@ class WhiteboardBackend(QObject):
         p = QPainter(img)
         p.setRenderHint(QPainter.Antialiasing)
         p.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        self._apply_view(p)
         p.save()
         p.translate(cx, cy)
         p.rotate(deg)
@@ -7744,15 +8111,18 @@ class WhiteboardBackend(QObject):
     @Slot(float, float, str, float, float, float, float, result="QVariantList")
     def snapScaleAspect(self, mx, my, corner, x0, y0, w0, h0):
         """非旋转态四角缩放（由 QML 驱动）：把鼠标吸到"等比例缩放直线"上，返回 [x, y]。"""
+        s = self._view_s if self._view_s > 0 else 1.0
+        cx, cy = self._v2c(mx, my)          # 视口 → 画布
         try:
-            px, py, guide = self._scale_aspect_snap(float(mx), float(my), str(corner),
+            px, py, guide = self._scale_aspect_snap(cx, cy, str(corner),
                                                     float(x0), float(y0),
-                                                    float(w0), float(h0))
+                                                    float(w0) / s, float(h0) / s)
         except Exception as e:
             plugin_logger.debug(f"等比例缩放吸附失败: {e}")
-            px, py, guide = float(mx), float(my), None
+            px, py, guide = cx, cy, None
         self._set_scale_aspect_guide(guide)
-        return [px, py]
+        vx, vy = self._c2v(px, py)          # 画布 → 视口（QML 拿它定位鼠标）
+        return [vx, vy]
 
     @Slot()
     def clearScaleAspectGuide(self):
@@ -7808,7 +8178,7 @@ class WhiteboardBackend(QObject):
             nl = ncx - nw / 2.0
             nt = ncy - nh / 2.0
             # 复用统一的"目标矩形 + 预览"通道（预览渲染会按 _sel_rot_deg 补上绕中心的旋转）
-            self.applyTransform(nl, nt, nw, nh)
+            self._apply_transform(nl, nt, nw, nh)
         except Exception as e:
             plugin_logger.debug(f"旋转态缩放失败: {e}")
 
@@ -7928,6 +8298,7 @@ class WhiteboardBackend(QObject):
         坐标系（`self._axis_drag` 非空）：端点**只能沿这根轴原方向移动**（横向偏移忽略），
         且不得越过原点（长度不小于 `_AXIS_MIN_LEN`）→ 见用户要求 3。
         """
+        x, y = self._v2c(x, y)   # 视口 → 画布
         if not self._line_handle:
             return
         sid, which = self._line_handle
@@ -8112,7 +8483,7 @@ class WhiteboardBackend(QObject):
         self._preview_base = None
         if self._store:
             w, h, dpr, mode = self._screen
-            self._store.new_session(w, h, dpr, mode)
+            self._store.new_session(w, h, dpr, mode, frame=self._frame0)
             new_file = self._store.current_file()
         else:
             new_file = None
@@ -8133,12 +8504,14 @@ class WhiteboardBackend(QObject):
         self._image.fill(Qt.transparent)
         self._save_page_registry()
         self._release_other_pages()   # 释放其他页常驻点列（各页已增量落盘）
+        self._fit_view()   # 新页继承了当前视框 → 重算（幂等）
         self._render_all()
         self._bump()
         self.selectionChanged.emit()
         self.canUndoChanged.emit()
         self.pageChanged.emit()
         self.pageAdded.emit()   # 页面列表增量同步：append 新页（避免 ListView 全重建/滚动重置）
+        self._bump_thumbs()     # 页数变化 → 与 openHistoryPage/切页 一致：版本 +1 让缩略图列表重取
 
     def _switch_to_page(self, index):
         """切到指定页（0-based）：保存当前页内存状态，打开目标页会话文件并载入其笔迹/撤销栈。"""
@@ -8159,11 +8532,11 @@ class WhiteboardBackend(QObject):
             if page["file"]:
                 if not self._store.open_session(page["file"]):
                     w, h, dpr, mode = self._screen
-                    self._store.new_session(w, h, dpr, mode)
+                    self._store.new_session(w, h, dpr, mode, frame=self._frame0)
                     page["file"] = self._store.current_file()
             else:
                 w, h, dpr, mode = self._screen
-                self._store.new_session(w, h, dpr, mode)
+                self._store.new_session(w, h, dpr, mode, frame=self._frame0)
                 page["file"] = self._store.current_file()
         # 惰性页：切回时才从该页的会话文件读回笔迹（见 _release_other_pages）
         if page.get("strokes") is None:
@@ -8182,6 +8555,7 @@ class WhiteboardBackend(QObject):
         self._sel_color = ""
         self._sel_width = 0
         self._save_page_registry()
+        self._fit_view()   # 切页 → 按目标页的视框重算缩放/原点
         self._render_all()
         self._bump()
         self.selectionChanged.emit()
@@ -8257,9 +8631,10 @@ class WhiteboardBackend(QObject):
         self._preview_base = None
         # 读出历史页笔迹（只读打开，不碰当前会话）
         hist = self._load_page_strokes_readonly(base)
-        # 新建会话文件作为新页
+        # 新建会话文件作为新页（继承来源页的视框 → 导入的笔迹在屏幕上位置不变）
         w, h, dpr, mode = self._screen
-        self._store.new_session(w, h, dpr, mode)
+        self._store.new_session(w, h, dpr, mode,
+                                frame=self._read_page_frame(base) or self._frame0)
         new_file = self._store.current_file()
         strokes = []
         for s in hist:
@@ -8292,6 +8667,7 @@ class WhiteboardBackend(QObject):
         self._image.fill(Qt.transparent)
         self._save_page_registry()
         self._release_other_pages()
+        self._fit_view()   # 导入的页有自己的视框 → 重算缩放/原点
         self._render_all()
         self._bump()
         self.selectionChanged.emit()
@@ -8337,11 +8713,11 @@ class WhiteboardBackend(QObject):
             if page["file"]:
                 if not self._store.open_session(page["file"]):
                     w, h, dpr, mode = self._screen
-                    self._store.new_session(w, h, dpr, mode)
+                    self._store.new_session(w, h, dpr, mode, frame=self._frame0)
                     page["file"] = self._store.current_file()
             else:
                 w, h, dpr, mode = self._screen
-                self._store.new_session(w, h, dpr, mode)
+                self._store.new_session(w, h, dpr, mode, frame=self._frame0)
                 page["file"] = self._store.current_file()
         # 惰性页：切回时才从该页的会话文件读回笔迹
         if page.get("strokes") is None:
@@ -8359,6 +8735,7 @@ class WhiteboardBackend(QObject):
         self._sel_color = ""
         self._sel_width = 0
         self._save_page_registry()
+        self._fit_view()   # 删页 → 当前页可能换了一页 → 重算视框
         self._render_all()
         self._bump()
         self.selectionChanged.emit()
@@ -8761,8 +9138,16 @@ class WhiteboardBackend(QObject):
 
         含手绘笔迹的混选返回空 → QML 回退到“蓝色矩形 + 四角缩放”的传统形态；
         旋转手柄在两种形态下都保留。
+
+        端点是**画布坐标**存的 → 这里统一换成**屏幕视口坐标**再给 QML（手柄才能贴住笔迹）。
         """
-        return self._line_handles_data()
+        out = []
+        for h in self._line_handles_data():
+            d = dict(h)
+            d["x0"], d["y0"] = self._c2v(h.get("x0", 0.0), h.get("y0", 0.0))
+            d["x1"], d["y1"] = self._c2v(h.get("x1", 0.0), h.get("y1", 0.0))
+            out.append(d)
+        return out
 
     @Slot(float, float, result='QVariantList')
     def hitLineEndpoint(self, x, y):
@@ -8771,11 +9156,14 @@ class WhiteboardBackend(QObject):
         QML 侧端点手柄是**纯视觉**的（不挂 MouseArea）：拖拽由覆盖层那两个稳定的
         MouseArea 统一分发。因为手柄项会随 selectionLineHandles 模型变化被 Repeater
         重建，挂在手柄上的 MouseArea 会在拖拽中途被销毁、丢掉鼠标 grab—— 表现为
-        “端点只能拖动几 px”。半径 16 与手柄命中尺寸（EndHandle.hitR）一致。
+        “端点只能拖动几 px”。半径 **屏幕 16px**（= EndHandle.hitR）→ 换到画布单位要除以视框缩放。
         坐标系：只命中有手柄的那一端（`has0`/`has1`；空间直角坐标系原点那一端无手柄）。
         """
+        x, y = self._v2c(x, y)   # 视口 → 画布（与 _line_handles_data 的画布坐标同系）
         best = []
-        best_d2 = 16.0 * 16.0
+        _vs = self._view_s if self._view_s > 0 else 1.0
+        _r = 16.0 / _vs          # 命中半径：屏幕上恒 16px（缩放≠1 时画布单位更大/更小）
+        best_d2 = _r * _r
         for h in self._line_handles_data():
             cand = []
             if h.get("has0") is not False:
@@ -8803,7 +9191,13 @@ class WhiteboardBackend(QObject):
 
     @Property('QVariantList', notify=selectionChanged)
     def selectionRect(self):
-        return list(self._sel_rect) if self._sel_rect else []
+        """选中范围 [x, y, w, h]（**视口坐标**：位置按视框映射、宽高乘缩放）。"""
+        if not self._sel_rect:
+            return []
+        r = self._sel_rect
+        x, y = self._c2v(r[0], r[1])
+        s = self._view_s if self._view_s > 0 else 1.0
+        return [x, y, float(r[2]) * s, float(r[3]) * s]
 
     @Property(str, notify=selectionChanged)
     def selectionColor(self):

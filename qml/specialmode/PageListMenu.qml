@@ -17,10 +17,10 @@ Item {
     id: root
     objectName: "pageListMenu"
 
-    // 强制重载全部缩略图：打开菜单时 + 内容变化（thumbsChanged：擦除/移动/撤销等）时都
+    // 强制重载全部缩略图：打开菜单时 + 内容变化（thumbsChanged：擦除/移动/撤销/切页/加页/导入历史页）时都
     // 递增 reloadTick 并入缩略图 source → QML 重新请求渲染最新内容（不依赖 onVisibleChanged）。
-    // 删除/加页不触发 thumbsChanged、也不全局 bump 版本 → 列表靠 ListView model 变化增量
-    // 更新，避免全列表刷新/滚动失效；打开菜单时由下方 onVisibleChanged 兜底一次。
+    // 删页**不** bump 版本（索引重排由下方 onPageRemoved 递增 reloadTick 兜底）→ 列表仍靠 ListView
+    // model 增量更新，避免无谓的全列表重建/滚动失效；打开菜单时再由 onVisibleChanged 兜底一次。
     property int reloadTick: 0
     onVisibleChanged: {
         if (visible) {

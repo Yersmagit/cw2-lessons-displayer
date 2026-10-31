@@ -29,9 +29,26 @@
 9. offscreen 下**字体不渲染**：文字相关只能断言 `text` 属性，视觉靠截图人工看。
 10. 断言名/打印串里禁止 GBK 不能编码的字符（`−` U+2212、`²` …）→ 用 `-`、`^2`；否则 `UnicodeEncodeError` 会把 traceback 指到 `check()` 上，看着像语法错误。
 
+**后端（`main.py`）**
+11. `_tf_*` / `_ax_*` 是 `WhiteboardBackend` 的**状态字段**，不是方法前缀（`def _tf_` / `def _ax_` 全文件 0 个）；
+    找入口要搜 `beginFocusProbe` / `_commit_focus_stage` / `_commit_axes` / `_refresh_axes_stage`。清单见 `AGENTS.md §5`。
+12. `WhiteboardImageProvider.requestImage` **完全忽略 `v=` / `o=` 参数** —— 它们只是用来改 URL 字符串，
+    让 Qt 的图片缓存重新发起请求。新写 `Image.source` 必须带 `&v=<version>`，否则内容变了也不刷新。
+    现状（2026-10-29 复核，**不是缺陷**）：`DataManagerPanel.qml:533-535`、`:577-579`、`PageListMenu.qml:194-195`
+    都已带 `&v=` + `&o=`；`PageTile` 另设 `cache: false`，`_dev/_verify_shapes_qml.py` 有断言守护。
+    **URL 是跨行拼接的** —— 单行 grep 只看首行会误判成"缺参数"（曾经误报过一次）。
+13. 多页/存储的"不可逆"点：`_save_page_registry` 是直接 `open(...,"w")` + `json.dump`（非原子、异常只记日志）；
+    `deletePage` 删页**不可撤销**（先 `StrokeStore.remove_file`）。改这两处前先想好失败回滚。
+14. 坐标系是**两级矩形**：`frame_*`（内容框，永不改）+ 视口（每次现算）。两条最容易踩的坑：
+    ① 分辨率自适应**不能在上次视口上累加 Δ**（来回换屏会把内容越缩越小）→ 一律从内容框现算；
+    ② 坐标取 2 位小数**只能在落盘层**（内存取整会打挂 1e-9 级几何断言）。
+    "界面 px"常量（胶囊 28px、手柄命中 16px）参与画布计算必须 `/ viewScale`。详见 `AGENTS.md §5`。
+
 **同步与环境**
-11. 安装副本 `qml/specialmode/ShapeMenu.qml` 里有用户手改的 `chipRow.spacing: 0`（源是 `3`）→ 同步必须**字节级等长替换**保留；不要用 `Set-Content -Encoding UTF8`（加 BOM / 改行尾）。
-12. 用户会**直接改安装副本**里的 QML（微调像素）→ 开工前先对比源与副本，必要时先把副本回灌到工作区再改。
+15. 安装副本 `qml/specialmode/ShapeMenu.qml` 里有用户手改的 `chipRow.spacing: 0`（源是 `3`）→ 同步必须**字节级等长替换**保留；不要用 `Set-Content -Encoding UTF8`（加 BOM / 改行尾）。
+16. 用户会**直接改安装副本**里的 QML（微调像素）→ 开工前先对比源与副本，必要时先把副本回灌到工作区再改。
+   2026-10-31 已把副本里的两处手改回灌回源码（`EraserMenu.qml` 的 `height 104`/`spacing 4`、
+   `DataManagerPanel.qml` 的 `cardPadBottom 0`）→ 现在**全库只剩 `ShapeMenu.qml` 的 `spacing: 3→0` 这一处例外**。
 
 ## 验证手法（照抄即可）
 - 六套回归 + `_dev\_render_menu.py`（「差异采样点: 0」+ 墨量比 ≈1.000）见 `AGENTS.md §3`。
